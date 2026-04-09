@@ -16,19 +16,25 @@ This module implements Approach A. Approach B is shown in the example at the
 bottom of this file.
 
 Environment variables:
-  GROCERY_SERVER_URL  -- base URL of the local web server
-                         (default: http://127.0.0.1:5000)
+  GROCERY_SERVER_URL           -- base URL of the local web server
+                                  (default: http://127.0.0.1:5000)
+  DISCORD_BOT_TOKEN            -- your bot token from discord.com/developers
+  GROCERY_DISCORD_CHANNEL_ID   -- restrict intake to one channel (optional)
+
+Discord Bot Setup:
+  1. Create an application at discord.com/developers/applications
+  2. Create a Bot under your application
+  3. Enable MESSAGE_CONTENT intent (required to read message text)
+  4. Invite the bot to your server with Send Messages + Read Message History permissions
+  5. Add the Discord user IDs for trusted senders to TRUSTED_DISCORD_USERS in identity.py
+  6. Set DISCORD_BOT_TOKEN=your_bot_token
+  7. Optionally set GROCERY_DISCORD_CHANNEL_ID=channel_id to restrict to one channel
+  8. Run: pip install discord.py && python -m grocery_assistant.bridges.discord_bridge
 
 Local simulation (no bot token needed):
   curl -X POST http://127.0.0.1:5000/discord/event \\
     -H "Content-Type: application/json" \\
     -d '{"author": {"id": "YOUR_USER_ID"}, "content": "bananas, eggs"}'
-
-Real discord.py bot wiring (see example at bottom of file):
-  1. pip install discord.py
-  2. Set DISCORD_BOT_TOKEN env var
-  3. Add trusted user IDs to TRUSTED_DISCORD_USERS in identity.py
-  4. Run: python -m grocery_assistant.bridges.discord_bridge
 
 Identity notes:
   - Identity is resolved from author.id (Discord snowflake), NOT author.username
@@ -205,5 +211,17 @@ if __name__ == "__main__":
         )
         sys.exit(1)
 
-    bot = setup_bot()
+    try:
+        bot = setup_bot()
+    except ImportError as exc:
+        print(
+            f"[error] {exc}\n\n"
+            "Install discord.py first:\n"
+            "  pip install discord.py\n\n"
+            "Then re-run:\n"
+            "  python -m grocery_assistant.bridges.discord_bridge",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     bot.run(token)

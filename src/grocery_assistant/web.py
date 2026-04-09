@@ -13,8 +13,19 @@ Provides an operator API (JSON) for local review and management:
   POST /api/draft                  -- create a new order draft
   POST /api/resolve                -- resolve an ambiguous item
   GET  /api/draft/<session_id>     -- fetch a specific draft/session
+  GET  /api/preferences            -- list all preference rules
+  POST /api/preferences            -- set/update a preference rule
+  DELETE /api/preferences/<name>   -- delete a preference rule
 
 All routes are thin. Business logic lives in the service modules.
+
+Twilio Webhook Setup:
+  1. Buy/provision a number in twilio.com/console
+  2. Add the phone number to TRUSTED_SMS_SENDERS in identity.py
+  3. Set TWILIO_AUTH_TOKEN in your environment
+  4. Set TWILIO_VALIDATE_SIGNATURE=1 in your environment
+  5. Set TWILIO_WEBHOOK_URL to your public ngrok/tunnel URL
+  6. Point the Twilio number's inbound SMS webhook to: https://your-url/sms/webhook
 
 Usage (local development):
     python -m grocery_assistant.web
@@ -27,7 +38,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify, g, Response
 
 from .db import (
     get_connection,
@@ -55,6 +66,18 @@ from .clarification import (
     ClarificationError,
 )
 from .twilio_sig import verify_signature as twilio_verify_signature
+from .preferences import (
+    list_preferences,
+    set_preference,
+    get_preference,
+    delete_preference,
+)
+
+
+def twiml_response(text: str) -> Response:
+    """Return a Flask Response with TwiML XML body and text/xml content type."""
+    xml = f"<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>{text}</Message></Response>"
+    return Response(xml, status=200, mimetype="text/xml")
 
 
 def _check_twilio_signature() -> bool:
@@ -143,7 +166,17 @@ def create_app(conn: sqlite3.Connection | None = None,
             return jsonify({"error": "untrusted_sender", "detail": str(exc)}), 403
         except ValueError as exc:
             return jsonify({"error": "bad_request", "detail": str(exc)}), 400
-        return jsonify(result), 200
+        # Twilio expects TwiML XML, not JSON
+        added = result.get("added", [])
+        flagged = result.get("flagged", [])
+        if flagged:
+            flag_names = ", ".join(f["item"] for f in flagged)
+            msg = f"Got it - added to your list. Note: {flag_names} needs clarification."
+        elif added:
+            msg = "Got it - items added to your list."
+        else:
+            msg = "Got it - already on your list."
+        return twiml_response(msg)
 
     # ------------------------------------------------------------------
     # Discord intake
@@ -323,6 +356,59 @@ def create_app(conn: sqlite3.Connection | None = None,
             return jsonify({"error": "clarification_error", "detail": str(exc)}), 400
 
         return jsonify(result), 200
+
+    # ------------------------------------------------------------------
+    # Preferences API
+    # ------------------------------------------------------------------
+
+    @app.route("/api/preferences", methods=["GET"])
+    def api_preferences_list():
+        """Return all preference rules as JSON."""
+        conn_ = _get_conn()
+        return jsonify(list_preferences(conn_)), 200
+
+    @app.route("/api/preferences", methods=["POST"])
+    def api_preferences_set():
+        """
+        Set or update a preference rule.
+
+        Expects JSON body:
+          {
+            "canonical":       "<canonical item name>",  (required)
+            "preferred_form":  "<preferred form>",       (optional)
+            "substitutions_ok": true/false,              (optional, default false)
+            "note":            "<free-text note>"        (optional)
+          }
+        """
+        conn_ = _get_conn()
+        if not request.is_json:
+            return jsonify({"error": "bad_request",
+                            "detail": "Content-Type must be application/json"}), 400
+
+        body = request.get_json(force=True, silent=True) or {}
+        canonical = (body.get("canonical") or "").strip()
+        if not canonical:
+            return jsonify({"error": "bad_request",
+                            "detail": "canonical is required"}), 400
+
+        pref = set_preference(
+            conn_,
+            canonical=canonical,
+            preferred_form=(body.get("preferred_form") or "").strip() or None,
+            substitutions_ok=bool(body.get("substitutions_ok", False)),
+            note=(body.get("note") or "").strip() or None,
+        )
+        return jsonify(pref), 200
+
+    @app.route("/api/preferences/<canonical>", methods=["DELETE"])
+    def api_preferences_delete(canonical: str):
+        """Delete a preference rule by canonical name."""
+        conn_ = _get_conn()
+        deleted = delete_preference(conn_, canonical)
+        if not deleted:
+            return jsonify({"error": "not_found",
+                            "detail": f"No preference for '{canonical}'."}), 404
+        return jsonify({"deleted": True, "canonical": canonical}), 200
 
     return app
 

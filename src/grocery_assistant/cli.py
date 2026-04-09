@@ -197,6 +197,48 @@ def cmd_remove(args: argparse.Namespace) -> None:
         print(f"  Sessions promoted to awaiting_approval: {promoted}")
 
 
+def cmd_prefs(args: argparse.Namespace) -> None:
+    from .preferences import (
+        list_preferences,
+        set_preference,
+        delete_preference,
+        format_preference_note,
+    )
+    conn = _get_conn()
+
+    if args.prefs_cmd == "list":
+        prefs = list_preferences(conn)
+        if not prefs:
+            print("No preferences set. Use 'prefs set' to add one.")
+            return
+        print(f"Preferences ({len(prefs)}):")
+        for p in prefs:
+            note = format_preference_note(p)
+            print(f"  {p['canonical']:20} {note}")
+
+    elif args.prefs_cmd == "set":
+        pref = set_preference(
+            conn,
+            canonical=args.canonical,
+            preferred_form=args.prefer or None,
+            substitutions_ok=args.subs_ok,
+            note=args.note or None,
+        )
+        print(f"Preference set for '{pref['canonical']}':")
+        print(f"  {format_preference_note(pref)}")
+
+    elif args.prefs_cmd == "remove":
+        deleted = delete_preference(conn, args.canonical)
+        if deleted:
+            print(f"Removed preference for '{args.canonical}'.")
+        else:
+            print(f"No preference found for '{args.canonical}'.")
+
+    else:
+        print("Unknown prefs subcommand.", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_history(args: argparse.Namespace) -> None:
     from .clarification import get_resolution_history
     conn = _get_conn()
@@ -253,6 +295,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_remove.add_argument("item_id", type=int, help="Item ID")
     p_remove.add_argument("--reason", default="", help="Optional reason for removal")
 
+    # prefs
+    p_prefs = sub.add_parser("prefs", help="Manage household item preferences")
+    prefs_sub = p_prefs.add_subparsers(dest="prefs_cmd", required=True)
+
+    prefs_sub.add_parser("list", help="List all preference rules")
+
+    p_prefs_set = prefs_sub.add_parser("set", help="Set a preference rule for a canonical item")
+    p_prefs_set.add_argument("canonical", help="Canonical item name (e.g. milk)")
+    p_prefs_set.add_argument("--prefer", default="", metavar="FORM",
+                              help="Preferred form (e.g. 'oat milk')")
+    p_prefs_set.add_argument("--subs-ok", action="store_true",
+                              help="Allow substitutions for this item")
+    p_prefs_set.add_argument("--note", default="", metavar="TEXT",
+                              help="Optional free-text note")
+
+    p_prefs_remove = prefs_sub.add_parser("remove", help="Delete a preference rule")
+    p_prefs_remove.add_argument("canonical", help="Canonical item name to remove")
+
     return parser
 
 
@@ -266,6 +326,7 @@ COMMANDS = {
     "history": cmd_history,
     "inspect": cmd_inspect,
     "remove": cmd_remove,
+    "prefs": cmd_prefs,
 }
 
 
