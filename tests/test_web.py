@@ -68,33 +68,35 @@ class TestSmsWebhook:
         })
         assert resp.status_code == 200
 
-    def test_valid_sms_response_has_expected_keys(self, client):
+    def test_valid_sms_returns_twiml_xml(self, client):
         resp = client.post("/sms/webhook", data={
             "From": "+12065550001",
             "Body": "bananas",
         })
-        data = resp.get_json()
-        assert "event_id" in data
-        assert "added" in data
-        assert "merged" in data
-        assert "flagged" in data
+        assert resp.content_type == "text/xml; charset=utf-8"
+        assert b"<Response>" in resp.data
+        assert b"<Message>" in resp.data
 
-    def test_valid_sms_adds_item(self, client):
+    def test_valid_sms_adds_item_twiml_response(self, client, conn):
         resp = client.post("/sms/webhook", data={
             "From": "+12065550001",
             "Body": "oat milk",
         })
-        data = resp.get_json()
-        assert "milk oat" in data["added"]
+        assert resp.status_code == 200
+        assert b"Got it" in resp.data
+        # Verify the item was actually added via the list API
+        list_resp = client.get("/api/list")
+        canonicals = [i["canonical"] for i in list_resp.get_json()]
+        assert "milk oat" in canonicals
 
-    def test_valid_sms_flags_ambiguous_item(self, client):
+    def test_valid_sms_flags_ambiguous_item_twiml(self, client):
         resp = client.post("/sms/webhook", data={
             "From": "+12065550001",
             "Body": "milk",
         })
-        data = resp.get_json()
-        assert len(data["flagged"]) == 1
-        assert data["flagged"][0]["item"] == "milk"
+        assert resp.status_code == 200
+        # TwiML response mentions clarification for ambiguous item
+        assert b"needs clarification" in resp.data
 
     def test_sms_untrusted_sender_returns_403(self, client):
         resp = client.post("/sms/webhook", data={
@@ -117,20 +119,24 @@ class TestSmsWebhook:
         })
         assert resp.status_code == 400
 
-    def test_sms_deduplication_returns_in_merged(self, client):
+    def test_sms_deduplication_twiml_response(self, client):
         client.post("/sms/webhook", data={"From": "+12065550001", "Body": "bananas"})
         resp = client.post("/sms/webhook", data={"From": "+12065550001", "Body": "bananas"})
-        data = resp.get_json()
-        assert "bananas" in data["merged"]
-        assert "bananas" not in data["added"]
+        assert resp.status_code == 200
+        assert b"<Response>" in resp.data
+        # Second send returns "already on your list" message
+        assert b"already on your list" in resp.data
 
-    def test_sms_multi_item_message(self, client):
+    def test_sms_multi_item_message(self, client, conn):
         resp = client.post("/sms/webhook", data={
             "From": "+12065550001",
             "Body": "bananas, eggs, oat milk",
         })
-        data = resp.get_json()
-        assert len(data["added"]) == 3
+        assert resp.status_code == 200
+        assert b"Got it" in resp.data
+        # Verify all 3 items added via list API
+        list_resp = client.get("/api/list")
+        assert len(list_resp.get_json()) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -434,3 +440,79 @@ class TestApiResolve:
                     content_type="application/json")
         flagged = client.get("/api/flagged").get_json()
         assert flagged == []
+
+
+# ---------------------------------------------------------------------------
+# /api/preferences
+# ---------------------------------------------------------------------------
+
+class TestApiPreferences:
+    def test_get_preferences_empty(self, client):
+        resp = client.get("/api/preferences")
+        assert resp.status_code == 200
+        assert resp.get_json() == []
+
+    def test_post_preference_creates_rule(self, client):
+        resp = client.post("/api/preferences",
+                           data=json.dumps({
+                               "canonical": "milk",
+                               "preferred_form": "oat milk",
+                           }),
+                           content_type="application/json")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["canonical"] == "milk"
+        assert data["preferred_form"] == "oat milk"
+        assert data["substitutions_ok"] is False
+
+    def test_post_preference_with_subs_ok(self, client):
+        resp = client.post("/api/preferences",
+                           data=json.dumps({
+                               "canonical": "eggs",
+                               "substitutions_ok": True,
+                           }),
+                           content_type="application/json")
+        assert resp.status_code == 200
+        assert resp.get_json()["substitutions_ok"] is True
+
+    def test_post_preference_missing_canonical_returns_400(self, client):
+        resp = client.post("/api/preferences",
+                           data=json.dumps({"preferred_form": "oat milk"}),
+                           content_type="application/json")
+        assert resp.status_code == 400
+        assert "canonical" in resp.get_json()["detail"]
+
+    def test_post_preference_wrong_content_type_returns_400(self, client):
+        resp = client.post("/api/preferences",
+                           data="canonical=milk",
+                           content_type="application/x-www-form-urlencoded")
+        assert resp.status_code == 400
+
+    def test_get_preferences_returns_set_rule(self, client):
+        client.post("/api/preferences",
+                    data=json.dumps({"canonical": "milk", "preferred_form": "oat milk"}),
+                    content_type="application/json")
+        data = client.get("/api/preferences").get_json()
+        assert len(data) == 1
+        assert data[0]["canonical"] == "milk"
+
+    def test_delete_preference_removes_rule(self, client):
+        client.post("/api/preferences",
+                    data=json.dumps({"canonical": "milk"}),
+                    content_type="application/json")
+        resp = client.delete("/api/preferences/milk")
+        assert resp.status_code == 200
+        assert resp.get_json()["deleted"] is True
+
+    def test_delete_preference_not_found_returns_404(self, client):
+        resp = client.delete("/api/preferences/nonexistent")
+        assert resp.status_code == 404
+        assert resp.get_json()["error"] == "not_found"
+
+    def test_delete_preference_removes_from_list(self, client):
+        client.post("/api/preferences",
+                    data=json.dumps({"canonical": "milk"}),
+                    content_type="application/json")
+        client.delete("/api/preferences/milk")
+        data = client.get("/api/preferences").get_json()
+        assert data == []
