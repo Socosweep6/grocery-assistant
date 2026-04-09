@@ -191,3 +191,70 @@ def update_item_quantity(conn: sqlite3.Connection,
         (quantity, unit, item_id),
     )
     conn.commit()
+
+
+def update_item_resolved(conn: sqlite3.Connection,
+                          item_id: int, new_name: str,
+                          new_canonical: str) -> None:
+    """Clear ambiguous flag and update name/canonical after clarification."""
+    conn.execute(
+        "UPDATE grocery_items SET name = ?, canonical = ?, ambiguous = 0 WHERE id = ?",
+        (new_name, new_canonical, item_id),
+    )
+    conn.commit()
+
+
+def get_item_by_id(conn: sqlite3.Connection,
+                    item_id: int) -> Optional[sqlite3.Row]:
+    """Return a single grocery item by primary key."""
+    return conn.execute(
+        "SELECT * FROM grocery_items WHERE id = ?", (item_id,)
+    ).fetchone()
+
+
+def insert_clarification_log(conn: sqlite3.Connection,
+                               item_id: int,
+                               original_name: str, original_canonical: str,
+                               resolved_name: str, resolved_canonical: str,
+                               resolved_by: str,
+                               timestamp: Optional[datetime] = None) -> int:
+    """Record the resolution of an ambiguous item."""
+    ts = (timestamp or datetime.now(UTC)).isoformat()
+    cur = conn.execute(
+        "INSERT INTO clarification_log"
+        " (item_id, original_name, original_canonical,"
+        "  resolved_name, resolved_canonical, resolved_by, timestamp)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (item_id, original_name, original_canonical,
+         resolved_name, resolved_canonical, resolved_by, ts),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_clarification_log(conn: sqlite3.Connection,
+                           item_id: int) -> list[sqlite3.Row]:
+    """Return all clarification history for an item."""
+    return conn.execute(
+        "SELECT * FROM clarification_log WHERE item_id = ? ORDER BY timestamp",
+        (item_id,),
+    ).fetchall()
+
+
+def get_sessions_needing_clarification(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Return all cart sessions currently in needs_clarification status."""
+    return conn.execute(
+        "SELECT * FROM cart_sessions WHERE status = 'needs_clarification'"
+    ).fetchall()
+
+
+def count_ambiguous_in_session(conn: sqlite3.Connection,
+                                 session_id: int) -> int:
+    """Count how many ambiguous items remain in a given session."""
+    row = conn.execute(
+        "SELECT COUNT(*) as n FROM cart_session_items csi"
+        " JOIN grocery_items gi ON csi.item_id = gi.id"
+        " WHERE csi.session_id = ? AND gi.ambiguous = 1",
+        (session_id,),
+    ).fetchone()
+    return row["n"] if row else 0

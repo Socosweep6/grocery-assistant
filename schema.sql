@@ -56,3 +56,14 @@ CREATE TABLE IF NOT EXISTS approvals (
     approval_phrase TEXT    NOT NULL,
     timestamp       TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS clarification_log (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id             INTEGER NOT NULL REFERENCES grocery_items(id),
+    original_name       TEXT    NOT NULL,
+    original_canonical  TEXT    NOT NULL,
+    resolved_name       TEXT    NOT NULL,
+    resolved_canonical  TEXT    NOT NULL,
+    resolved_by         TEXT    NOT NULL,
+    timestamp           TEXT    NOT NULL
+);

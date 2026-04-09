@@ -283,3 +283,43 @@ def normalize_item_name(raw: str) -> str:
     _, _, remainder = _extract_quantity(raw.strip())
     remainder, _ = _extract_notes(remainder)
     return _to_canonical(remainder or raw)
+
+
+def normalize_item(raw: str) -> "ParsedItem":
+    """
+    Parse and normalize a single item string into a ParsedItem.
+
+    Unlike parse_message, this treats the entire input as one item
+    and does not split on commas or 'and'.
+    """
+    text = _strip_prefix(raw.strip())
+    if not text:
+        from .models import ParsedItem
+        return ParsedItem(raw=raw, canonical="", quantity=None, unit=None,
+                          notes=None, category="other", ambiguous=True,
+                          ambiguity_reason="empty input")
+
+    quantity, unit, remainder = _extract_quantity(text)
+    remainder, notes = _extract_notes(remainder)
+
+    if not remainder:
+        from .models import ParsedItem
+        return ParsedItem(raw=raw, canonical="", quantity=None, unit=None,
+                          notes=None, category="other", ambiguous=True,
+                          ambiguity_reason="empty after parsing")
+
+    canonical = _to_canonical(remainder)
+    category = _categorize(canonical)
+    ambiguous, ambiguity_reason = _check_ambiguity(canonical)
+
+    from .models import ParsedItem
+    return ParsedItem(
+        raw=text,
+        canonical=canonical,
+        quantity=quantity,
+        unit=unit,
+        notes=notes,
+        category=category,
+        ambiguous=ambiguous,
+        ambiguity_reason=ambiguity_reason,
+    )
