@@ -99,11 +99,19 @@ def create_draft(conn: sqlite3.Connection) -> dict:
 
 def format_draft(draft: dict) -> str:
     """Human-readable draft for terminal review."""
+    # Build category summary (e.g. "2 produce, 1 dairy")
+    cat_counts: dict[str, int] = {}
+    for item in draft["items"]:
+        cat_counts[item["category"]] = cat_counts.get(item["category"], 0) + 1
+    cat_summary = ", ".join(
+        f"{n} {cat}" for cat, n in sorted(cat_counts.items())
+    ) if cat_counts else "none"
+
     lines = [
         "=== Instacart Order Draft ===",
         f"Session ID : {draft['session_id']}",
         f"Status     : {draft['status']}",
-        f"Items      : {draft['item_count']}",
+        f"Items      : {draft['item_count']}  ({cat_summary})",
         f"Flagged    : {draft['flagged_count']}",
         "",
         "-- Items to order --",
@@ -119,14 +127,18 @@ def format_draft(draft: dict) -> str:
                 if item["unit"]:
                     qty_str += f" {item['unit']}"
             lines.append(
-                f"  [{item['category']:10}] {item['display_name']}{qty_str}"
+                f"  #{item['id']:<4} [{item['category']:10}] {item['display_name']}{qty_str}"
             )
 
     if draft["ambiguous"]:
         lines.append("")
         lines.append("-- Needs clarification before ordering --")
         for item in draft["ambiguous"]:
-            lines.append(f"  [?] {item['display_name']}")
+            lines.append(
+                f"  #{item['id']:<4} [?] {item['display_name']}"
+                "  -> resolve with: python -m grocery_assistant.cli resolve"
+                f" {item['id']} \"<specific name>\""
+            )
 
     lines.extend([
         "",

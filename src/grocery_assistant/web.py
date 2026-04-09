@@ -29,7 +29,14 @@ from pathlib import Path
 
 from flask import Flask, request, jsonify, g
 
-from .db import get_connection, get_session, get_session_items
+from .db import (
+    get_connection,
+    get_session,
+    get_session_items,
+    get_item_by_id,
+    remove_item,
+    insert_removal_log,
+)
 from .grocery_list import (
     format_list,
     get_list,
@@ -38,6 +45,7 @@ from .grocery_list import (
     get_by_channel,
 )
 from .draft import create_draft, format_draft
+from .clarification import promote_cleared_sessions
 from .intake.sms_adapter import SmsAdapter
 from .intake.discord_adapter import DiscordAdapter
 from .identity import UntrustedSenderError, TRUSTED_SMS_SENDERS, TRUSTED_DISCORD_USERS
@@ -46,6 +54,26 @@ from .clarification import (
     resolve_item,
     ClarificationError,
 )
+from .twilio_sig import verify_signature as twilio_verify_signature
+
+
+def _check_twilio_signature() -> bool:
+    """
+    Verify the Twilio request signature if validation is enabled.
+
+    Enabled when TWILIO_AUTH_TOKEN and TWILIO_VALIDATE_SIGNATURE=1 are set.
+    Returns True if valid (or validation is disabled). Returns False on failure.
+
+    Set TWILIO_WEBHOOK_URL to your public-facing URL when running behind a proxy
+    (e.g. ngrok), since Flask sees the internal URL, not the signed URL.
+    """
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    if not auth_token or not os.environ.get("TWILIO_VALIDATE_SIGNATURE"):
+        return True  # dev mode -- skip
+
+    signature = request.headers.get("X-Twilio-Signature", "")
+    url = os.environ.get("TWILIO_WEBHOOK_URL", request.url)
+    return twilio_verify_signature(auth_token, url, request.form, signature)
 
 
 def create_app(conn: sqlite3.Connection | None = None,
@@ -104,6 +132,9 @@ def create_app(conn: sqlite3.Connection | None = None,
         Returns JSON summary of what was added/merged/flagged.
         Returns 400 on missing fields, 403 on untrusted sender.
         """
+        if not _check_twilio_signature():
+            return jsonify({"error": "forbidden",
+                            "detail": "Twilio signature verification failed."}), 403
         conn_ = _get_conn()
         adapter = SmsAdapter(conn_, trusted_senders=_trusted_sms)
         try:
@@ -205,6 +236,51 @@ def create_app(conn: sqlite3.Connection | None = None,
         return jsonify({
             "session": dict(session),
             "items": [dict(i) for i in items],
+        }), 200
+
+    @app.route("/api/item/<int:item_id>/remove", methods=["POST"])
+    def api_remove_item(item_id: int):
+        """
+        Safely remove a pending grocery item.
+
+        Sets the item's status to 'removed' and writes a removal_log entry.
+        The row is preserved for auditability -- nothing is hard-deleted.
+
+        Expects JSON body (all fields optional):
+          {
+            "removed_by": "<operator name>",   (default: "operator")
+            "reason":     "<why it was removed>"
+          }
+
+        Returns 404 if the item does not exist.
+        Returns 400 if the item is already removed.
+        """
+        conn_ = _get_conn()
+        item = get_item_by_id(conn_, item_id)
+        if item is None:
+            return jsonify({"error": "not_found",
+                            "detail": f"Item {item_id} does not exist."}), 404
+        if item["status"] == "removed":
+            return jsonify({"error": "bad_request",
+                            "detail": f"Item {item_id} is already removed."}), 400
+
+        body = {}
+        if request.is_json:
+            body = request.get_json(force=True, silent=True) or {}
+        removed_by = (body.get("removed_by") or "operator").strip() or "operator"
+        reason = (body.get("reason") or "").strip() or None
+
+        insert_removal_log(conn_, item_id, item["name"], removed_by=removed_by, reason=reason)
+        remove_item(conn_, item_id)
+        promoted = promote_cleared_sessions(conn_)
+
+        return jsonify({
+            "item_id": item_id,
+            "item_name": item["name"],
+            "removed_by": removed_by,
+            "reason": reason,
+            "status": "removed",
+            "promoted_sessions": promoted,
         }), 200
 
     @app.route("/api/resolve", methods=["POST"])

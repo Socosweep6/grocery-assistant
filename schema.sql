@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS grocery_items (
     notes       TEXT,
     category    TEXT    NOT NULL DEFAULT 'other',
     status      TEXT    NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'reviewed', 'drafted', 'ordered')),
+                    CHECK (status IN ('pending', 'reviewed', 'drafted', 'ordered', 'removed')),
     ambiguous   INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT    NOT NULL
 );
@@ -66,4 +66,13 @@ CREATE TABLE IF NOT EXISTS clarification_log (
     resolved_canonical  TEXT    NOT NULL,
     resolved_by         TEXT    NOT NULL,
     timestamp           TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS removal_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id     INTEGER NOT NULL REFERENCES grocery_items(id),
+    item_name   TEXT    NOT NULL,
+    removed_by  TEXT    NOT NULL DEFAULT 'operator',
+    reason      TEXT,
+    timestamp   TEXT    NOT NULL
 );

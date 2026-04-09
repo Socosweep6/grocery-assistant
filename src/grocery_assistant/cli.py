@@ -15,6 +15,8 @@ Commands:
     draft                       Create a new order draft from pending items
     resolve <item_id> <name>    Resolve an ambiguous item with a refined name
     history <item_id>           Show clarification history for an item
+    inspect <item_id>           Show full details and source events for an item
+    remove <item_id>            Safely remove an item (marks removed, preserves audit trail)
 
 All commands use the default database (grocery.db) unless GROCERY_DB_PATH is set.
 """
@@ -117,6 +119,84 @@ def cmd_resolve(args: argparse.Namespace) -> None:
         print("  No sessions promoted (ambiguous items may still remain).")
 
 
+def cmd_inspect(args: argparse.Namespace) -> None:
+    from .db import get_item_by_id, get_source_events_for_item, get_clarification_log, get_removal_log
+    conn = _get_conn()
+    item = get_item_by_id(conn, args.item_id)
+    if item is None:
+        print(f"[error] Item {args.item_id} does not exist.", file=sys.stderr)
+        sys.exit(1)
+
+    ambig_label = "yes (needs clarification)" if item["ambiguous"] else "no"
+    qty_str = ""
+    if item["quantity"]:
+        qty_str = f" {item['quantity']}"
+        if item["unit"]:
+            qty_str += f" {item['unit']}"
+
+    print(f"Item #{item['id']}: {item['name']}{qty_str}")
+    print(f"  Canonical  : {item['canonical']}")
+    print(f"  Category   : {item['category']}")
+    print(f"  Status     : {item['status']}")
+    print(f"  Ambiguous  : {ambig_label}")
+    print(f"  Created at : {item['created_at']}")
+
+    sources = get_source_events_for_item(conn, args.item_id)
+    print()
+    if sources:
+        print(f"Source events ({len(sources)}):")
+        for ev in sources:
+            print(f"  [{ev['id']}] {ev['timestamp']}  via {ev['source_channel']} from {ev['sender']}")
+            print(f"       {ev['raw_text']!r}")
+    else:
+        print("Source events: (none recorded)")
+
+    clog = get_clarification_log(conn, args.item_id)
+    print()
+    if clog:
+        print(f"Clarification history ({len(clog)}):")
+        for entry in clog:
+            print(f"  [{entry['timestamp']}] by {entry['resolved_by']}")
+            print(f"    {entry['original_name']!r} -> {entry['resolved_name']!r}")
+    else:
+        print("Clarification history: (none)")
+
+    rlog = get_removal_log(conn, args.item_id)
+    if rlog:
+        print()
+        print(f"Removal log ({len(rlog)}):")
+        for entry in rlog:
+            reason_str = f" -- {entry['reason']}" if entry["reason"] else ""
+            print(f"  [{entry['timestamp']}] by {entry['removed_by']}{reason_str}")
+
+
+def cmd_remove(args: argparse.Namespace) -> None:
+    from .db import get_item_by_id, remove_item, insert_removal_log
+    from .clarification import promote_cleared_sessions
+    conn = _get_conn()
+    item = get_item_by_id(conn, args.item_id)
+    if item is None:
+        print(f"[error] Item {args.item_id} does not exist.", file=sys.stderr)
+        sys.exit(1)
+    if item["status"] == "removed":
+        print(f"[error] Item {args.item_id} ('{item['name']}') is already removed.", file=sys.stderr)
+        sys.exit(1)
+
+    reason = args.reason or None
+    insert_removal_log(conn, item["id"], item["name"], removed_by="operator", reason=reason)
+    remove_item(conn, item["id"])
+
+    promoted = promote_cleared_sessions(conn)
+
+    print(f"Removed item #{item['id']} '{item['name']}'.")
+    if reason:
+        print(f"  Reason: {reason}")
+    print("  Audit entry recorded. Item will no longer appear in the list.")
+    print("  To re-add it, send a new message with the correct item name.")
+    if promoted:
+        print(f"  Sessions promoted to awaiting_approval: {promoted}")
+
+
 def cmd_history(args: argparse.Namespace) -> None:
     from .clarification import get_resolution_history
     conn = _get_conn()
@@ -164,6 +244,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_history = sub.add_parser("history", help="Show clarification history for an item")
     p_history.add_argument("item_id", type=int, help="Item ID")
 
+    # inspect
+    p_inspect = sub.add_parser("inspect", help="Show full details and source events for an item")
+    p_inspect.add_argument("item_id", type=int, help="Item ID")
+
+    # remove
+    p_remove = sub.add_parser("remove", help="Safely remove an item (marks removed, preserves audit trail)")
+    p_remove.add_argument("item_id", type=int, help="Item ID")
+    p_remove.add_argument("--reason", default="", help="Optional reason for removal")
+
     return parser
 
 
@@ -175,6 +264,8 @@ COMMANDS = {
     "draft": cmd_draft,
     "resolve": cmd_resolve,
     "history": cmd_history,
+    "inspect": cmd_inspect,
+    "remove": cmd_remove,
 }
 
 

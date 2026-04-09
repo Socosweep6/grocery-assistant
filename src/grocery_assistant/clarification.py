@@ -52,6 +52,23 @@ def list_ambiguous(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
+def promote_cleared_sessions(conn: sqlite3.Connection) -> list[int]:
+    """Promote any needs_clarification sessions that now have zero ambiguous pending items.
+
+    Called after both item resolution and item removal, since either action can
+    be the last step that unblocks a session.
+
+    Returns a list of session IDs that were promoted to awaiting_approval.
+    """
+    promoted: list[int] = []
+    for session in get_sessions_needing_clarification(conn):
+        sid = session["id"]
+        if count_ambiguous_in_session(conn, sid) == 0:
+            update_session_status(conn, sid, "awaiting_approval")
+            promoted.append(sid)
+    return promoted
+
+
 def resolve_item(conn: sqlite3.Connection,
                   item_id: int,
                   new_name: str,
@@ -116,12 +133,7 @@ def resolve_item(conn: sqlite3.Connection,
 
     update_item_resolved(conn, item_id, parsed.raw, parsed.canonical)
 
-    promoted: list[int] = []
-    for session in get_sessions_needing_clarification(conn):
-        sid = session["id"]
-        if count_ambiguous_in_session(conn, sid) == 0:
-            update_session_status(conn, sid, "awaiting_approval")
-            promoted.append(sid)
+    promoted = promote_cleared_sessions(conn)
 
     return {
         "item_id": item_id,

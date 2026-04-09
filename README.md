@@ -4,7 +4,7 @@ Household grocery assistant for Discord + SMS intake with Instacart draft prep a
 
 ## Status
 
-Phase 3 complete. Twilio-shape webhook route, Discord event ingestion route, ambiguity resolution workflow, and a full operator surface (CLI + JSON API). 240 tests passing.
+Phase 4 complete. Twilio signature verification, Discord bridge skeleton, safe item removal with audit trail, improved draft output with item IDs and category summary, `inspect` and `remove` CLI commands, API remove endpoint, and `setup.sh` one-command setup. 282 tests passing.
 
 ## What This Does
 
@@ -77,34 +77,34 @@ Operator surface
 
 Requires Python 3.11+. Flask is the only runtime dependency beyond the standard library.
 
-**Step 1 — install Flask:**
+**Fastest path (one command):**
 
 ```bash
-# Ubuntu / WSL (system Python, no pip)
-sudo apt-get install python3-flask
+# Install Flask if you don't have it
+sudo apt-get install python3-flask   # Ubuntu / WSL without pip
+# or: pip install flask
 
-# Or via pip if available
-python3 -m pip install flask
+# Run the setup script from the repo root
+bash setup.sh
 ```
 
-**Step 2 — register the package so `python3 -m grocery_assistant.*` works from the repo root:**
+`setup.sh` auto-detects your Python version, registers the package (via pip editable install or `.pth` fallback), initializes the database, and confirms the CLI works. Safe to run multiple times.
 
-The repo uses a `src/` layout. Python won't find the package until you register it. The fastest way without a venv is a `.pth` file in your user site-packages:
+**Manual alternative (if you prefer explicit steps):**
 
 ```bash
+# Register the package so python3 -m grocery_assistant.* works
 mkdir -p ~/.local/lib/python3.12/site-packages
 echo "$(pwd)/src" > ~/.local/lib/python3.12/site-packages/grocery-assistant.pth
 ```
 
-If you're on Python 3.11 instead of 3.12, replace `python3.12` with `python3.11`. Confirm your version with `python3 --version`.
-
-If you have pip, use an editable install instead — it's equivalent and more standard:
+Replace `python3.12` with your version (`python3 --version` to check). Or use pip:
 
 ```bash
 pip install -e .
 ```
 
-After either step, verify it worked:
+Verify:
 
 ```bash
 python3 -m grocery_assistant.cli --help
@@ -144,17 +144,24 @@ python3 -m grocery_assistant.cli by-channel sms
 # Show what came from Discord
 python3 -m grocery_assistant.cli by-channel discord
 
-# Create a draft from all pending items
+# Create a draft from all pending items (shows item IDs + category summary)
 python3 -m grocery_assistant.cli draft
 
 # Create a draft and also print raw JSON
 python3 -m grocery_assistant.cli draft --json
 
-# Resolve an ambiguous item (get item_id from 'flagged' output)
+# Resolve an ambiguous item (get item_id from 'flagged' or 'draft' output)
 python3 -m grocery_assistant.cli resolve <item_id> "oat milk"
 
 # Show clarification history for an item
 python3 -m grocery_assistant.cli history <item_id>
+
+# Show full details for an item: canonical, category, all source events, clarification + removal history
+python3 -m grocery_assistant.cli inspect <item_id>
+
+# Safely remove an item (marks as removed, writes audit entry, never hard-deletes)
+python3 -m grocery_assistant.cli remove <item_id>
+python3 -m grocery_assistant.cli remove <item_id> --reason "duplicate"
 ```
 
 Use `GROCERY_DB_PATH` to point at a specific database file:
@@ -200,6 +207,11 @@ curl http://127.0.0.1:5000/api/draft/1
 curl -X POST http://127.0.0.1:5000/api/resolve \
   -H "Content-Type: application/json" \
   -d '{"item_id": 1, "new_name": "oat milk", "resolved_by": "operator"}'
+
+# Safely remove an item (marks as removed, writes audit entry, never hard-deletes)
+curl -X POST http://127.0.0.1:5000/api/item/1/remove \
+  -H "Content-Type: application/json" \
+  -d '{"removed_by": "operator", "reason": "duplicate"}'
 ```
 
 ## Simulating Intake Locally

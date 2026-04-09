@@ -241,6 +241,41 @@ def get_clarification_log(conn: sqlite3.Connection,
     ).fetchall()
 
 
+def remove_item(conn: sqlite3.Connection, item_id: int) -> None:
+    """Set an item's status to 'removed'. Does not delete the row (auditability)."""
+    conn.execute(
+        "UPDATE grocery_items SET status = 'removed' WHERE id = ?",
+        (item_id,),
+    )
+    conn.commit()
+
+
+def insert_removal_log(conn: sqlite3.Connection,
+                        item_id: int,
+                        item_name: str,
+                        removed_by: str = "operator",
+                        reason: str | None = None,
+                        timestamp: datetime | None = None) -> int:
+    """Record that an item was removed by an operator."""
+    ts = (timestamp or datetime.now(UTC)).isoformat()
+    cur = conn.execute(
+        "INSERT INTO removal_log (item_id, item_name, removed_by, reason, timestamp)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (item_id, item_name, removed_by, reason, ts),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_removal_log(conn: sqlite3.Connection,
+                     item_id: int) -> list[sqlite3.Row]:
+    """Return all removal log entries for a given item."""
+    return conn.execute(
+        "SELECT * FROM removal_log WHERE item_id = ? ORDER BY timestamp",
+        (item_id,),
+    ).fetchall()
+
+
 def get_sessions_needing_clarification(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all cart sessions currently in needs_clarification status."""
     return conn.execute(
@@ -250,11 +285,15 @@ def get_sessions_needing_clarification(conn: sqlite3.Connection) -> list[sqlite3
 
 def count_ambiguous_in_session(conn: sqlite3.Connection,
                                  session_id: int) -> int:
-    """Count how many ambiguous items remain in a given session."""
+    """Count how many ambiguous *pending* items remain in a given session.
+
+    Removed items are excluded: removing an ambiguous item should unblock
+    the session just as resolving it does.
+    """
     row = conn.execute(
         "SELECT COUNT(*) as n FROM cart_session_items csi"
         " JOIN grocery_items gi ON csi.item_id = gi.id"
-        " WHERE csi.session_id = ? AND gi.ambiguous = 1",
+        " WHERE csi.session_id = ? AND gi.ambiguous = 1 AND gi.status = 'pending'",
         (session_id,),
     ).fetchone()
     return row["n"] if row else 0
