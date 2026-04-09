@@ -23,9 +23,30 @@ else
     if $PYTHON -m pip install -e "$REPO_ROOT" --quiet 2>/dev/null; then
         echo "[ok] Installed via pip editable install."
     else
-        # Fall back to .pth file (works without pip)
-        SITE_PACKAGES=$($PYTHON -c "import site; print(site.getusersitepackages())")
-        mkdir -p "$SITE_PACKAGES"
+        # Fall back to a .pth file. Prefer the active interpreter's site-packages
+        # so this also works inside virtual environments where user site-packages
+        # may be ignored.
+        SITE_PACKAGES=$($PYTHON - <<'PYEOF'
+import site
+from pathlib import Path
+candidates = []
+for p in site.getsitepackages():
+    candidates.append(Path(p))
+candidates.append(Path(site.getusersitepackages()))
+for path in candidates:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        test = path / '.hermes_write_test'
+        test.write_text('ok')
+        test.unlink()
+        print(path)
+        break
+    except Exception:
+        continue
+else:
+    raise SystemExit('no writable site-packages directory found')
+PYEOF
+)
         PTH_FILE="$SITE_PACKAGES/grocery-assistant.pth"
         echo "$REPO_ROOT/src" > "$PTH_FILE"
         echo "[ok] Registered via .pth file: $PTH_FILE"
