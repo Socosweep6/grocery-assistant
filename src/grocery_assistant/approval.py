@@ -16,7 +16,7 @@ Enforcement:
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from .db import (
@@ -132,7 +132,7 @@ def submit_approval(conn: sqlite3.Connection, session_id: int,
         )
 
     # All checks passed -- record and update
-    ts = timestamp or datetime.utcnow()
+    ts = timestamp or datetime.now(UTC)
     approval_id = record_approval(conn, session_id, approver, phrase, ts)
     update_session_status(conn, session_id, "approved")
 

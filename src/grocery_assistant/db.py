@@ -2,7 +2,7 @@
 
 import sqlite3
 from pathlib import Path
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "grocery.db"
@@ -25,7 +25,7 @@ def init_db(db_path: Path = DEFAULT_DB_PATH) -> None:
 def insert_intake_event(conn: sqlite3.Connection, raw_text: str,
                          source_channel: str, sender: str,
                          timestamp: Optional[datetime] = None) -> int:
-    ts = (timestamp or datetime.utcnow()).isoformat()
+    ts = (timestamp or datetime.now(UTC)).isoformat()
     cur = conn.execute(
         "INSERT INTO intake_events (raw_text, source_channel, sender, timestamp)"
         " VALUES (?, ?, ?, ?)",
@@ -40,7 +40,7 @@ def insert_grocery_item(conn: sqlite3.Connection, name: str, canonical: str,
                          unit: Optional[str] = None, notes: Optional[str] = None,
                          ambiguous: bool = False,
                          created_at: Optional[datetime] = None) -> int:
-    ts = (created_at or datetime.utcnow()).isoformat()
+    ts = (created_at or datetime.now(UTC)).isoformat()
     cur = conn.execute(
         "INSERT INTO grocery_items"
         " (name, canonical, category, quantity, unit, notes, ambiguous, created_at)"
@@ -72,7 +72,7 @@ def get_ambiguous_items(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 def create_cart_session(conn: sqlite3.Connection,
                          created_at: Optional[datetime] = None) -> int:
-    ts = (created_at or datetime.utcnow()).isoformat()
+    ts = (created_at or datetime.now(UTC)).isoformat()
     cur = conn.execute(
         "INSERT INTO cart_sessions (created_at, status) VALUES (?, 'draft')",
         (ts,),
@@ -108,7 +108,7 @@ def get_session(conn: sqlite3.Connection, session_id: int) -> Optional[sqlite3.R
 def record_approval(conn: sqlite3.Connection, session_id: int,
                      approved_by: str, approval_phrase: str,
                      timestamp: Optional[datetime] = None) -> int:
-    ts = (timestamp or datetime.utcnow()).isoformat()
+    ts = (timestamp or datetime.now(UTC)).isoformat()
     cur = conn.execute(
         "INSERT INTO approvals (session_id, approved_by, approval_phrase, timestamp)"
         " VALUES (?, ?, ?, ?)",
