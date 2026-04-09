@@ -1,107 +1,55 @@
 # Grocery Assistant
 
-Household grocery assistant for Discord + SMS intake with Instacart draft prep and a hard approval gate.
+Household grocery assistant with Discord + SMS intake, shared grocery list, Instacart draft generation, and a hard approval gate that blocks all ordering unless Vern explicitly approves.
 
 ## Status
 
-Phase 4 complete. Twilio signature verification, Discord bridge skeleton, safe item removal with audit trail, improved draft output with item IDs and category summary, `inspect` and `remove` CLI commands, API remove endpoint, and `setup.sh` one-command setup. 282 tests passing.
+Phase 5 complete. TwiML SMS responses, preferences system, draft diff (new-since-last-draft), `prefs` CLI subcommand, `/api/preferences` routes, Twilio and Discord setup documentation. 331 tests passing.
 
-## What This Does
+## What It Does
 
 - Accepts grocery items from Discord and SMS via webhook-ready adapters
-- Validates sender identity against a trusted sender registry before accepting any message
+- Validates sender identity against a trusted sender registry before accepting anything
 - Parses and normalizes item text ("don't forget dish soap", "ground turkey 2 lb", "bananas, eggs, oat milk")
 - Deduplicates by canonical name while preserving all source links and provenance
 - Categorizes items (produce, protein, dairy, pantry, frozen, household, other)
-- Flags ambiguous items (bare "milk", "bread", "chips") without guessing
-- Resolves ambiguous items via CLI or API with full audit log
-- Promotes sessions from `needs_clarification` to `awaiting_approval` once all ambiguities are cleared
+- Flags ambiguous items ("milk", "bread", "chips") without silently guessing
+- Resolves ambiguous items via CLI or API with a full audit log
+- Supports household preference rules: preferred forms, substitution policy, notes per canonical item
+- Shows preference notes in draft output and during ambiguity resolution
+- Shows items added since the previous draft (draft diff)
 - Generates an Instacart-ready order draft
-- Enforces a hard approval gate: only Vern can approve, only explicit phrases count, per session, no blanket permission
+- Enforces a hard approval gate: only Vern can approve, only explicit phrases count, per session only
 
-## Non-negotiable Safety Rules
+## Safety Rules
 
 - No order is ever submitted automatically
 - No auto-checkout path exists in the codebase
 - Approval is per order session, not stored globally
 - Only Vern can approve
-- Phrases like "looks good", "nice", "thumbs up", or "yes" do not count
+- Phrases like "looks good", "nice", "thumbs up", or "yes" do not count as approval
 - Approval is blocked if any ambiguous items remain in the draft
-
-## Architecture
-
-```
-Intake (SMS / Discord)
-    |
-    v
-Identity validation (identity.py)
-    |-- SMS: E.164 phone number -> trusted name
-    `-- Discord: user ID (snowflake) -> trusted name
-    |
-    v
-Grocery list service (grocery_list.py)
-    |-- parse_message() -> ParsedItem list
-    |-- insert or link source to existing item
-    `-- safe quantity merge on dedup
-    |
-    v
-SQLite persistence (schema.sql, db.py)
-    |-- intake_events: raw message log
-    |-- grocery_items: canonical item state
-    |-- grocery_item_sources: item <-> event links (traceability)
-    |-- clarification_log: ambiguity resolution audit trail
-    |-- cart_sessions + cart_session_items
-    `-- approvals
-    |
-    v
-Clarification service (clarification.py)
-    |-- list_ambiguous(): pending flagged items
-    |-- resolve_item(): validate, normalize, log, promote sessions
-    `-- get_resolution_history(): per-item audit trail
-    |
-    v
-Draft generation (draft.py)
-    |-- status: needs_clarification | awaiting_approval
-    |
-    v
-Approval gate (approval.py)
-    `-- only Vern, only explicit phrase, only awaiting_approval sessions
-    |
-    v
-Operator surface
-    |-- CLI: python -m grocery_assistant.cli <command>
-    `-- API: python -m grocery_assistant.web (http://127.0.0.1:5000)
-```
 
 ## Setup
 
-Requires Python 3.11+. Flask is the only runtime dependency beyond the standard library.
-
-**Fastest path (one command):**
+Requires Python 3.11+. Flask is the only runtime dependency.
 
 ```bash
-# Install Flask if you don't have it
-sudo apt-get install python3-flask   # Ubuntu / WSL without pip
-# or: pip install flask
+# Install Flask if needed
+pip install flask
+# or: sudo apt-get install python3-flask
 
-# Run the setup script from the repo root
+# Register the package (run once from repo root)
 bash setup.sh
 ```
 
-`setup.sh` auto-detects your Python version, registers the package (via pip editable install or `.pth` fallback), initializes the database, and confirms the CLI works. Safe to run multiple times.
+`setup.sh` auto-detects your Python version, registers the package, initializes the database, and confirms the CLI works.
 
-**Manual alternative (if you prefer explicit steps):**
-
-```bash
-# Register the package so python3 -m grocery_assistant.* works
-mkdir -p ~/.local/lib/python3.12/site-packages
-echo "$(pwd)/src" > ~/.local/lib/python3.12/site-packages/grocery-assistant.pth
-```
-
-Replace `python3.12` with your version (`python3 --version` to check). Or use pip:
+**Manual alternative:**
 
 ```bash
 pip install -e .
+# or: echo "$(pwd)/src" > ~/.local/lib/python3.12/site-packages/grocery-assistant.pth
 ```
 
 Verify:
@@ -110,126 +58,129 @@ Verify:
 python3 -m grocery_assistant.cli --help
 ```
 
-No real Twilio account or Discord bot token is required for local operation.
+No real Twilio account or Discord bot token required for local operation.
 
-## Run Tests
+## Running Tests
 
 ```bash
-cd /mnt/c/Users/bryce/projects/grocery-assistant
 python3 -m pytest tests/ -v
 ```
 
-Expected: 240 passed.
+Expected: 331 passed.
 
-## Local Operator Surface
-
-### Option A: CLI
+## CLI Commands
 
 ```bash
-# Show full grocery list grouped by category
+# Show grocery list grouped by category
 python3 -m grocery_assistant.cli list
 
-# Show items flagged as ambiguous (need clarification before draft can be approved)
+# Show ambiguous items that need clarification
 python3 -m grocery_assistant.cli flagged
 
-# Show what Cara added
+# Show items added by a specific sender
 python3 -m grocery_assistant.cli by-sender cara
-
-# Show what Vern added
 python3 -m grocery_assistant.cli by-sender vern
 
-# Show what came from SMS
+# Show items by intake channel
 python3 -m grocery_assistant.cli by-channel sms
-
-# Show what came from Discord
 python3 -m grocery_assistant.cli by-channel discord
 
-# Create a draft from all pending items (shows item IDs + category summary)
+# Create a draft from all pending items
 python3 -m grocery_assistant.cli draft
-
-# Create a draft and also print raw JSON
 python3 -m grocery_assistant.cli draft --json
 
-# Resolve an ambiguous item (get item_id from 'flagged' or 'draft' output)
+# Resolve an ambiguous item (get item_id from 'flagged' output)
 python3 -m grocery_assistant.cli resolve <item_id> "oat milk"
 
 # Show clarification history for an item
 python3 -m grocery_assistant.cli history <item_id>
 
-# Show full details for an item: canonical, category, all source events, clarification + removal history
+# Show full details and source events for an item
 python3 -m grocery_assistant.cli inspect <item_id>
 
-# Safely remove an item (marks as removed, writes audit entry, never hard-deletes)
+# Safely remove an item (marks removed, preserves audit trail)
 python3 -m grocery_assistant.cli remove <item_id>
 python3 -m grocery_assistant.cli remove <item_id> --reason "duplicate"
+
+# Manage household preferences
+python3 -m grocery_assistant.cli prefs list
+python3 -m grocery_assistant.cli prefs set milk --prefer "oat milk"
+python3 -m grocery_assistant.cli prefs set eggs --subs-ok
+python3 -m grocery_assistant.cli prefs set bread --prefer "sourdough" --note "bakery section"
+python3 -m grocery_assistant.cli prefs remove milk
 ```
 
-Use `GROCERY_DB_PATH` to point at a specific database file:
+Override the database path:
 
 ```bash
 GROCERY_DB_PATH=/path/to/grocery.db python3 -m grocery_assistant.cli list
 ```
 
-### Option B: Local Web Server + JSON API
-
-Start the server:
+## Running the Web Server
 
 ```bash
 python3 -m grocery_assistant.web
 # Starts on http://127.0.0.1:5000
-# Override port: GROCERY_PORT=8080 python3 -m grocery_assistant.web
-# Override DB: GROCERY_DB_PATH=/path/to/grocery.db python3 -m grocery_assistant.web
+
+# Override port or DB path
+GROCERY_PORT=8080 python3 -m grocery_assistant.web
+GROCERY_DB_PATH=/path/to/grocery.db python3 -m grocery_assistant.web
 ```
 
-API endpoints:
+## Using Preferences
+
+Preferences map canonical item names to a preferred form, substitution policy, and optional notes. They appear in draft output and during ambiguity resolution.
+
+The preferences table starts empty. Add rules at runtime:
 
 ```bash
-# Show full grocery list
-curl http://127.0.0.1:5000/api/list
+# Prefer oat milk, no substitutions
+python3 -m grocery_assistant.cli prefs set milk --prefer "oat milk"
 
-# Show flagged ambiguous items
-curl http://127.0.0.1:5000/api/flagged
+# Eggs: substitutions are okay
+python3 -m grocery_assistant.cli prefs set eggs --subs-ok
 
-# Show items by sender
-curl http://127.0.0.1:5000/api/by-sender/cara
+# Bread: preferred form and a note
+python3 -m grocery_assistant.cli prefs set bread --prefer "sourdough" --note "bakery section"
 
-# Show items by channel
-curl http://127.0.0.1:5000/api/by-channel/sms
-curl http://127.0.0.1:5000/api/by-channel/discord
+# List all preferences
+python3 -m grocery_assistant.cli prefs list
 
-# Create a draft
-curl -X POST http://127.0.0.1:5000/api/draft
-
-# Get a specific session
-curl http://127.0.0.1:5000/api/draft/1
-
-# Resolve an ambiguous item
-curl -X POST http://127.0.0.1:5000/api/resolve \
-  -H "Content-Type: application/json" \
-  -d '{"item_id": 1, "new_name": "oat milk", "resolved_by": "operator"}'
-
-# Safely remove an item (marks as removed, writes audit entry, never hard-deletes)
-curl -X POST http://127.0.0.1:5000/api/item/1/remove \
-  -H "Content-Type: application/json" \
-  -d '{"removed_by": "operator", "reason": "duplicate"}'
+# Remove a rule
+python3 -m grocery_assistant.cli prefs remove milk
 ```
 
-## Simulating Intake Locally
+Or via the API:
 
-### Simulate Twilio SMS (no real credentials needed)
+```bash
+curl -X POST http://127.0.0.1:5000/api/preferences \
+  -H "Content-Type: application/json" \
+  -d '{"canonical": "milk", "preferred_form": "oat milk"}'
+
+curl http://127.0.0.1:5000/api/preferences
+
+curl -X DELETE http://127.0.0.1:5000/api/preferences/milk
+```
+
+Draft output will show:
+```
+  #3    [dairy     ] milk  [pref: prefer: oat milk | exact item preferred]
+```
+
+## Simulating SMS Intake Locally
 
 ```bash
 # Start the web server first
 python3 -m grocery_assistant.web
 
-# In another terminal, POST a Twilio-shape inbound SMS
+# Simulate a Twilio inbound SMS
 curl -X POST http://127.0.0.1:5000/sms/webhook \
   -d "From=%2B12065550001&Body=bananas%2C+eggs%2C+oat+milk"
 ```
 
-The `From` field must match a number in `TRUSTED_SMS_SENDERS` (configured in `identity.py`). Untrusted numbers get a 403.
+Returns TwiML XML (what Twilio expects). The `From` field must match a number in `TRUSTED_SMS_SENDERS` in `identity.py`. Untrusted numbers return 403.
 
-### Simulate Discord MESSAGE_CREATE (no bot token needed)
+## Simulating Discord Intake Locally
 
 ```bash
 curl -X POST http://127.0.0.1:5000/discord/event \
@@ -237,11 +188,88 @@ curl -X POST http://127.0.0.1:5000/discord/event \
   -d '{"author": {"id": "123456789012345678"}, "content": "ground turkey 2 lb"}'
 ```
 
-The `author.id` must match an entry in `TRUSTED_DISCORD_USERS` (configured in `identity.py`). Untrusted IDs get a 403.
+The `author.id` must match an entry in `TRUSTED_DISCORD_USERS` in `identity.py`. Untrusted IDs return 403.
+
+## Twilio Hookup
+
+1. Buy/provision a number at twilio.com/console
+2. Add the phone number to `TRUSTED_SMS_SENDERS` in `src/grocery_assistant/identity.py`
+3. Set `TWILIO_AUTH_TOKEN` in your environment
+4. Set `TWILIO_VALIDATE_SIGNATURE=1` in your environment
+5. Set `TWILIO_WEBHOOK_URL` to your public ngrok/tunnel URL
+6. Point the Twilio number's inbound SMS webhook to: `https://your-url/sms/webhook`
+
+The `/sms/webhook` route returns TwiML XML on success, which Twilio uses to send a reply SMS.
+
+## Discord Bot Hookup
+
+1. Create an application at discord.com/developers/applications
+2. Create a Bot under your application
+3. Enable MESSAGE_CONTENT intent (required to read message text)
+4. Invite the bot to your server with Send Messages + Read Message History permissions
+5. Add the Discord user IDs for trusted senders to `TRUSTED_DISCORD_USERS` in `src/grocery_assistant/identity.py`
+6. Set `DISCORD_BOT_TOKEN=your_bot_token`
+7. Optionally set `GROCERY_DISCORD_CHANNEL_ID=channel_id` to restrict to one channel
+8. Run: `pip install discord.py && python -m grocery_assistant.bridges.discord_bridge`
+
+## Reviewing a Draft
+
+```bash
+# Generate a draft
+python3 -m grocery_assistant.cli draft
+
+# Example output:
+# === Instacart Order Draft ===
+# Session ID : 1
+# Status     : awaiting_approval
+# Items      : 3  (1 dairy, 2 produce)
+# Flagged    : 0
+#
+# -- New since last draft --   <- items added since last draft
+#   #4    eggs
+#
+# -- Items to order --
+#   #1    [dairy     ] milk  [pref: prefer: oat milk | exact item preferred]
+#   #2    [produce   ] bananas
+#   #3    [produce   ] eggs
+```
+
+The draft does not submit anything. Vern must approve with an explicit phrase.
+
+## API Reference
+
+```bash
+# Grocery list
+curl http://127.0.0.1:5000/api/list
+curl http://127.0.0.1:5000/api/flagged
+curl http://127.0.0.1:5000/api/by-sender/cara
+curl http://127.0.0.1:5000/api/by-channel/sms
+
+# Draft and session
+curl -X POST http://127.0.0.1:5000/api/draft
+curl http://127.0.0.1:5000/api/draft/1
+
+# Resolve ambiguity
+curl -X POST http://127.0.0.1:5000/api/resolve \
+  -H "Content-Type: application/json" \
+  -d '{"item_id": 1, "new_name": "oat milk"}'
+
+# Remove an item
+curl -X POST http://127.0.0.1:5000/api/item/1/remove \
+  -H "Content-Type: application/json" \
+  -d '{"removed_by": "operator", "reason": "duplicate"}'
+
+# Preferences
+curl http://127.0.0.1:5000/api/preferences
+curl -X POST http://127.0.0.1:5000/api/preferences \
+  -H "Content-Type: application/json" \
+  -d '{"canonical": "milk", "preferred_form": "oat milk"}'
+curl -X DELETE http://127.0.0.1:5000/api/preferences/milk
+```
 
 ## Trusted Sender Configuration
 
-Configure trusted senders in `src/grocery_assistant/identity.py`:
+Edit `src/grocery_assistant/identity.py`:
 
 ```python
 # SMS: E.164 phone number -> canonical name
@@ -256,128 +284,49 @@ TRUSTED_DISCORD_USERS: dict[str, str] = {
 }
 ```
 
-Messages from unrecognized senders are rejected with `UntrustedSenderError` before anything is written to the DB.
-
-For tests or local injection, pass the trusted dict directly:
-
-```python
-adapter = SmsAdapter(conn, trusted_senders={"+12065550001": "cara"})
-adapter = DiscordAdapter(conn, trusted_users={"111111111111111111": "vern"})
-```
-
-## Ambiguity Resolution Workflow
-
-Items flagged as ambiguous block approval until resolved. Workflow:
-
-1. Add items: `milk` is flagged, `oat milk` is not.
-2. Check flagged: `python3 -m grocery_assistant.cli flagged`
-3. Resolve: `python3 -m grocery_assistant.cli resolve 1 "oat milk"`
-4. Session auto-promotes from `needs_clarification` to `awaiting_approval` when last ambiguity is cleared.
-5. Create draft: `python3 -m grocery_assistant.cli draft`
-
-Resolution is audited in `clarification_log`. View history with:
-```bash
-python3 -m grocery_assistant.cli history <item_id>
-```
-
-## Source Traceability
-
-Every grocery item is linked to every intake event that requested it via `grocery_item_sources`.
-
-```python
-from grocery_assistant.grocery_list import get_by_sender, get_by_channel
-from grocery_assistant.db import get_source_events_for_item
-
-cara_items = get_by_sender(conn, "cara")
-sms_items  = get_by_channel(conn, "sms")
-events     = get_source_events_for_item(conn, item_id)
-```
-
-## Draft Status Model
-
-| Status | Meaning |
-|---|---|
-| `draft` | Session created, not yet finalized |
-| `needs_clarification` | At least one ambiguous item; approval blocked |
-| `awaiting_approval` | All items clear; Vern may approve |
-| `approved` | Vern has explicitly approved |
-| `cancelled` | Session cancelled |
-
-A draft moves to `needs_clarification` if any ambiguous items are present. Approval is blocked until the session is `awaiting_approval`.
-
-## Intake Adapters
-
-### SMS (Twilio webhook shape)
-
-```python
-from grocery_assistant.intake.sms_adapter import SmsAdapter
-
-adapter = SmsAdapter(conn, trusted_senders=TRUSTED_SMS_SENDERS)
-result = adapter.receive_webhook(request.form)
-# result: {"event_id": int, "added": [...], "merged": [...], "flagged": [...]}
-```
-
-`receive_webhook()` expects keys `From` (E.164) and `Body` (text), matching Twilio's inbound SMS POST format.
-
-### Discord (MESSAGE_CREATE event shape)
-
-```python
-from grocery_assistant.intake.discord_adapter import DiscordAdapter
-
-adapter = DiscordAdapter(conn, trusted_users=TRUSTED_DISCORD_USERS)
-result = adapter.receive_event(event)
-```
-
-`receive_event()` expects `{"author": {"id": "..."}, "content": "..."}`, matching Discord's MESSAGE_CREATE event structure. Identity is resolved from `author.id` (snowflake), never from `author.username`.
-
-## Dedupe / Merge Behavior
-
-| Scenario | Behavior |
-|---|---|
-| Same item, no existing quantity | Promote new quantity if present |
-| Same item, existing quantity matches new | No change (idempotent) |
-| Same item, quantities differ | Keep existing, track new source link |
-| Any duplicate | Always write a new `grocery_item_sources` row |
+Messages from unrecognized senders are rejected before anything is written to the DB.
 
 ## Project Layout
 
 ```
 grocery-assistant/
+  schema.sql                  # SQLite schema (8 tables + preferences)
   src/grocery_assistant/
-    db.py               # SQLite queries: insert, find, source linking, sender/channel views
-    models.py           # Dataclasses: IntakeEvent, GroceryItem, CartSession, Approval
-    normalizer.py       # Parse, normalize, categorize, flag ambiguity
-    identity.py         # Trusted sender registry and resolution (SMS + Discord)
-    grocery_list.py     # Add items from messages, safe dedupe, list views, source queries
-    clarification.py    # Ambiguity resolution service with audit log
-    approval.py         # Hard approval gate with phrase allowlist
-    draft.py            # Instacart-ready draft generation with status logic
-    cli.py              # Operator CLI (python -m grocery_assistant.cli)
-    web.py              # Flask web app: Twilio/Discord routes + operator API
+    db.py                     # All SQLite queries + apply_migrations()
+    models.py                 # Dataclasses: IntakeEvent, GroceryItem, CartSession, Approval
+    normalizer.py             # Parse, normalize, categorize, flag ambiguity
+    identity.py               # Trusted sender registry (SMS + Discord)
+    grocery_list.py           # Add items, dedupe, list views, source queries
+    clarification.py          # Ambiguity resolution with audit log
+    approval.py               # Hard approval gate with phrase allowlist
+    draft.py                  # Draft generation: preference notes, draft diff
+    preferences.py            # Preference rules: set/get/list/delete/format
+    cli.py                    # Operator CLI (9 commands including prefs)
+    web.py                    # Flask app: Twilio/Discord routes + operator API
+    twilio_sig.py             # HMAC-SHA1 Twilio signature verification
     intake/
-      base.py              # IntakeAdapter interface
-      sms_adapter.py       # Twilio webhook adapter
-      discord_adapter.py   # Discord message event adapter
-      sms_stub.py          # Phase 1 direct-injection stub (still works)
-      discord_stub.py      # Phase 1 direct-injection stub (still works)
+      base.py                 # IntakeAdapter interface
+      sms_adapter.py          # Twilio webhook adapter
+      discord_adapter.py      # Discord message event adapter
+    bridges/
+      discord_bridge.py       # discord.py bot wiring (Approach A)
   tests/
-    test_normalizer.py      # Parse, normalize, categorize, ambiguity
-    test_approval.py        # Approval gate enforcement
-    test_sources.py         # Source traceability, dedupe, sender/channel queries
-    test_identity.py        # Trusted sender validation, adapter enforcement
-    test_draft_status.py    # Draft status and approval gate with ambiguous items
-    test_clarification.py   # Ambiguity resolution workflow, session promotion, audit log
-    test_web.py             # Flask routes: SMS webhook, Discord event, operator API
-    test_cli.py             # CLI operator surface, parser structure
-  schema.sql          # SQLite schema (includes clarification_log table)
-  pyproject.toml      # pytest config and package setup
+    test_normalizer.py
+    test_approval.py
+    test_sources.py
+    test_identity.py
+    test_draft_status.py
+    test_clarification.py
+    test_web.py
+    test_cli.py
+    test_twilio_sig.py
+    test_preferences.py
+    test_draft_diff.py
 ```
 
-## What Is Not Implemented Yet
+## What Is Not Implemented
 
-- **Real Twilio credentials**: The webhook route shape is correct (`POST /sms/webhook` with `From`/`Body` form fields). Wiring a real Twilio phone number requires adding your number to `TRUSTED_SMS_SENDERS` and pointing a Twilio webhook at the local server (e.g. via ngrok). No code changes needed.
-- **Real Discord bot login**: The event ingestion route (`POST /discord/event`) accepts Discord's MESSAGE_CREATE JSON shape. A real bot would authenticate with discord.py and forward events to this route. The integration layer is thin by design.
-- **Browser-assisted Instacart cart drafting**: The draft output is Instacart-ready (canonical search terms, categories, quantities) but no browser automation exists. This is intentional for MVP.
-- **Order submission**: Not implemented. Will never be implemented without an explicit new phase and a separate safety review.
-- **Substitution preferences per item**: Not implemented.
+- **Browser-assisted Instacart cart drafting**: Draft output is Instacart-ready but no browser automation exists. Intentional for MVP.
+- **Order submission**: Not implemented. Will not be implemented without an explicit new phase and safety review.
 - **Recurring staples list**: Not implemented.
+- **Push notifications**: No outbound SMS/Discord messages on list changes (Twilio TwiML ack only).
