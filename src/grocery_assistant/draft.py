@@ -26,7 +26,9 @@ from .db import (
     get_session_items,
     get_pending_items,
     get_ambiguous_items,
+    get_last_session_time,
 )
+from .preferences import get_preference_for_item, format_preference_note
 
 
 def create_draft(conn: sqlite3.Connection) -> dict:
@@ -39,6 +41,7 @@ def create_draft(conn: sqlite3.Connection) -> dict:
     - ambiguous: items that need clarification
     - status: 'needs_clarification' if ambiguous items exist, else 'awaiting_approval'
     - instructions: what Vern needs to do next
+    - new_since_last_draft: items added after the previous draft session (if any)
     """
     pending = get_pending_items(conn)
     ambiguous = get_ambiguous_items(conn)
@@ -46,11 +49,18 @@ def create_draft(conn: sqlite3.Connection) -> dict:
 
     session_id = create_cart_session(conn)
 
+    # Items added after the previous cart_session was created
+    prev_session_time = get_last_session_time(conn, before_session_id=session_id)
+
     draft_items: list[dict] = []
     flagged_items: list[dict] = []
+    new_items: list[dict] = []
 
     for row in pending:
         add_item_to_session(conn, session_id, row["id"])
+
+        pref = get_preference_for_item(conn, row["canonical"])
+        pref_note = format_preference_note(pref) if pref else None
 
         item_dict = {
             "id": row["id"],
@@ -60,12 +70,17 @@ def create_draft(conn: sqlite3.Connection) -> dict:
             "quantity": row["quantity"],
             "unit": row["unit"],
             "notes": row["notes"],
+            "preference_note": pref_note,
         }
 
         if row["id"] in ambiguous_ids:
             flagged_items.append(item_dict)
         else:
             draft_items.append(item_dict)
+
+        # Track items newer than the previous draft session
+        if prev_session_time and row["created_at"] > prev_session_time:
+            new_items.append(item_dict)
 
     # Status depends on whether there are unresolved ambiguities
     if flagged_items:
@@ -93,6 +108,7 @@ def create_draft(conn: sqlite3.Connection) -> dict:
         "ambiguous": flagged_items,
         "item_count": len(draft_items),
         "flagged_count": len(flagged_items),
+        "new_since_last_draft": new_items,
         "instructions": instructions,
     }
 
@@ -114,8 +130,17 @@ def format_draft(draft: dict) -> str:
         f"Items      : {draft['item_count']}  ({cat_summary})",
         f"Flagged    : {draft['flagged_count']}",
         "",
-        "-- Items to order --",
     ]
+
+    # New since last draft section
+    new_items = draft.get("new_since_last_draft", [])
+    if new_items:
+        lines.append("-- New since last draft --")
+        for item in new_items:
+            lines.append(f"  #{item['id']:<4} {item['display_name']}")
+        lines.append("")
+
+    lines.append("-- Items to order --")
 
     if not draft["items"] and not draft["ambiguous"]:
         lines.append("  (no items)")
@@ -126,8 +151,9 @@ def format_draft(draft: dict) -> str:
                 qty_str = f" x{item['quantity']}"
                 if item["unit"]:
                     qty_str += f" {item['unit']}"
+            pref_str = f"  [pref: {item['preference_note']}]" if item.get("preference_note") else ""
             lines.append(
-                f"  #{item['id']:<4} [{item['category']:10}] {item['display_name']}{qty_str}"
+                f"  #{item['id']:<4} [{item['category']:10}] {item['display_name']}{qty_str}{pref_str}"
             )
 
     if draft["ambiguous"]:

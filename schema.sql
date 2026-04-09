@@ -76,3 +76,12 @@ CREATE TABLE IF NOT EXISTS removal_log (
     reason      TEXT,
     timestamp   TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS preferences (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    canonical       TEXT    NOT NULL UNIQUE,
+    preferred_form  TEXT,
+    substitutions_ok INTEGER NOT NULL DEFAULT 0,
+    note            TEXT,
+    updated_at      TEXT    NOT NULL
+);

@@ -13,7 +13,29 @@ def get_connection(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    apply_migrations(conn)
     return conn
+
+
+def apply_migrations(conn: sqlite3.Connection) -> None:
+    """Run additive schema migrations.
+
+    Safe to call on both new and existing databases. Each statement uses
+    CREATE TABLE IF NOT EXISTS so it is idempotent.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS preferences (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            canonical       TEXT    NOT NULL UNIQUE,
+            preferred_form  TEXT,
+            substitutions_ok INTEGER NOT NULL DEFAULT 0,
+            note            TEXT,
+            updated_at      TEXT    NOT NULL
+        )
+        """
+    )
+    conn.commit()
 
 
 def init_db(db_path: Path = DEFAULT_DB_PATH) -> None:
@@ -274,6 +296,26 @@ def get_removal_log(conn: sqlite3.Connection,
         "SELECT * FROM removal_log WHERE item_id = ? ORDER BY timestamp",
         (item_id,),
     ).fetchall()
+
+
+def get_last_session_time(conn: sqlite3.Connection,
+                           before_session_id: int | None = None) -> str | None:
+    """Return the created_at of the most recent cart_session before before_session_id.
+
+    If before_session_id is None, returns the most recent session overall.
+    Returns None if no previous sessions exist.
+    """
+    if before_session_id is not None:
+        row = conn.execute(
+            "SELECT created_at FROM cart_sessions"
+            " WHERE id < ? ORDER BY id DESC LIMIT 1",
+            (before_session_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT created_at FROM cart_sessions ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    return row["created_at"] if row else None
 
 
 def get_sessions_needing_clarification(conn: sqlite3.Connection) -> list[sqlite3.Row]:

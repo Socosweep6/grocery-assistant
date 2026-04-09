@@ -26,6 +26,7 @@ from .db import (
     count_ambiguous_in_session,
     update_session_status,
 )
+from .preferences import get_preference_for_item, format_preference_note
 
 
 class ClarificationError(ValueError):
@@ -135,7 +136,7 @@ def resolve_item(conn: sqlite3.Connection,
 
     promoted = promote_cleared_sessions(conn)
 
-    return {
+    result = {
         "item_id": item_id,
         "original_name": item["name"],
         "original_canonical": item["canonical"],
@@ -145,6 +146,13 @@ def resolve_item(conn: sqlite3.Connection,
         "timestamp": ts.isoformat(),
         "promoted_sessions": promoted,
     }
+
+    # Surface any preference rule for the original canonical so the operator can see it
+    pref = get_preference_for_item(conn, item["canonical"])
+    if pref:
+        result["preference_note"] = format_preference_note(pref)
+
+    return result
 
 
 def get_resolution_history(conn: sqlite3.Connection, item_id: int) -> list[dict]:
