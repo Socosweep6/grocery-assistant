@@ -244,7 +244,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     """Check setup readiness: Twilio, Discord, DB, trusted senders, importability."""
     import importlib
     from pathlib import Path
-    from .config import load_env_config, get_readiness
+    from .config import load_env_config, get_readiness, get_partial_config_risks
     from .identity import TRUSTED_SMS_SENDERS, TRUSTED_DISCORD_USERS
     from .db import DEFAULT_DB_PATH
 
@@ -270,6 +270,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     # --- env / identity checks ---
     result = get_readiness(cfg, TRUSTED_SMS_SENDERS, TRUSTED_DISCORD_USERS)
+    risks = get_partial_config_risks(cfg, TRUSTED_SMS_SENDERS, TRUSTED_DISCORD_USERS)
 
     # --- print report ---
     SYMBOLS = {"ok": "[OK]  ", "warn": "[WARN]", "miss": "[MISS]"}
@@ -288,6 +289,13 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         sym = SYMBOLS[check["status"]]
         detail = f"  ({check['detail']})" if check["detail"] else ""
         print(f"  {sym}  {check['label']}{detail}")
+
+    if risks:
+        print()
+        print("Risks:")
+        for risk in risks:
+            print(f"  [RISK]  {risk['label']}")
+            print(f"          {risk['detail']}")
 
     print()
     print("Modes:")
@@ -320,8 +328,21 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         print("  2. Edit src/grocery_assistant/identity.py with real phone numbers / Discord user IDs")
         print("  3. source .env  (or export vars in your shell)")
         print("  4. python3 -m grocery_assistant.cli doctor")
+        print()
+        print("Activation helpers:")
+        print("  python3 scripts/twilio_setup.py   -- Twilio checklist + webhook URL")
+        print("  python3 scripts/discord_setup.py  -- Discord checklist")
     else:
         print("Everything looks configured. Run the web server and test a real webhook.")
+
+    if cfg.twilio_webhook_url and twilio["ready"]:
+        url = cfg.twilio_webhook_url.rstrip("/")
+        if not url.endswith("/sms/webhook"):
+            url = url + "/sms/webhook"
+        print()
+        print("Twilio console webhook URL:")
+        print(f"  {url}")
+        print("  (paste this into: twilio.com/console -> Phone Numbers -> Manage -> Active Numbers -> Messaging)")
 
 
 def cmd_history(args: argparse.Namespace) -> None:

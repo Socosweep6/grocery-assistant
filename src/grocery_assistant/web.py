@@ -416,6 +416,8 @@ def create_app(conn: sqlite3.Connection | None = None,
 if __name__ == "__main__":
     import sys
     from .db import DEFAULT_DB_PATH, SCHEMA_PATH, get_connection
+    from .config import load_env_config, get_partial_config_risks
+    from .identity import TRUSTED_SMS_SENDERS, TRUSTED_DISCORD_USERS
 
     db_path_str = os.environ.get("GROCERY_DB_PATH", "")
     db_path = Path(db_path_str) if db_path_str else DEFAULT_DB_PATH
@@ -427,6 +429,17 @@ if __name__ == "__main__":
         print(f"Initialized new database at {db_path}", file=sys.stderr)
     else:
         _conn = get_connection(db_path)
+
+    # Warn on risky partial configurations before starting.
+    _cfg = load_env_config()
+    _risks = get_partial_config_risks(_cfg, TRUSTED_SMS_SENDERS, TRUSTED_DISCORD_USERS)
+    if _risks:
+        print("[WARNING] Risky configuration detected:", file=sys.stderr)
+        for _r in _risks:
+            print(f"  [RISK]  {_r['label']}", file=sys.stderr)
+            print(f"          {_r['detail']}", file=sys.stderr)
+        print("  Run 'python3 -m grocery_assistant.cli doctor' for details.", file=sys.stderr)
+        print(file=sys.stderr)
 
     port = int(os.environ.get("GROCERY_PORT", 5000))
     print(f"Starting Grocery Assistant on http://127.0.0.1:{port}", file=sys.stderr)

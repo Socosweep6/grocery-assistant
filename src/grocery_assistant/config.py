@@ -207,3 +207,86 @@ def get_readiness(
     }
 
     return {"checks": checks, "modes": modes}
+
+
+def get_partial_config_risks(
+    cfg: EnvConfig,
+    trusted_sms: dict,
+    trusted_discord: dict,
+) -> list[dict]:
+    """
+    Detect risky partial configurations that could expose the service or silently
+    break live mode even though some vars are set.
+
+    Different from get_readiness() -- this surfaces configs that look partially
+    intentional but are either insecure or will fail at runtime.
+
+    Args:
+        cfg: EnvConfig from load_env_config().
+        trusted_sms: TRUSTED_SMS_SENDERS dict from identity.py.
+        trusted_discord: TRUSTED_DISCORD_USERS dict from identity.py.
+
+    Returns:
+        List of {"label": str, "detail": str} risk dicts. Empty list = no risks.
+    """
+    risks = []
+
+    # Auth token present but signature verification disabled --
+    # requests reach /sms/webhook without HMAC check. Any caller can post.
+    if cfg.twilio_auth_token and not cfg.twilio_validate_signature:
+        risks.append({
+            "label": "TWILIO_AUTH_TOKEN is set but TWILIO_VALIDATE_SIGNATURE is off",
+            "detail": (
+                "Signature checking is disabled. Any HTTP client can POST to /sms/webhook "
+                "without Twilio signing it. Set TWILIO_VALIDATE_SIGNATURE=1 before going live."
+            ),
+        })
+
+    # Auth token present but no webhook URL -- signature check will use Flask's
+    # internal URL (http://127.0.0.1:5000/...) instead of the Twilio-signed public URL,
+    # causing every real request to fail verification.
+    if cfg.twilio_auth_token and cfg.twilio_validate_signature and not cfg.twilio_webhook_url:
+        risks.append({
+            "label": "TWILIO_AUTH_TOKEN + TWILIO_VALIDATE_SIGNATURE set but TWILIO_WEBHOOK_URL is missing",
+            "detail": (
+                "Signature verification is enabled but the URL used to verify is Flask's internal "
+                "URL, not the public ngrok/tunnel URL Twilio signed. Every real request will fail "
+                "with 403. Set TWILIO_WEBHOOK_URL=https://your-host/sms/webhook."
+            ),
+        })
+
+    # Webhook URL set but no auth token -- URL is configured as if live mode is intended,
+    # but no token means signature verification cannot run and will be silently skipped.
+    if cfg.twilio_webhook_url and not cfg.twilio_auth_token:
+        risks.append({
+            "label": "TWILIO_WEBHOOK_URL is set but TWILIO_AUTH_TOKEN is missing",
+            "detail": (
+                "Webhook URL is configured but no auth token is set. Signature verification "
+                "will be silently skipped (dev mode bypass). Set TWILIO_AUTH_TOKEN."
+            ),
+        })
+
+    # Webhook URL set but path doesn't end in /sms/webhook.
+    if cfg.twilio_webhook_url:
+        url = cfg.twilio_webhook_url.rstrip("/")
+        if not url.endswith("/sms/webhook"):
+            risks.append({
+                "label": "TWILIO_WEBHOOK_URL path does not end in /sms/webhook",
+                "detail": (
+                    f"Current value: {cfg.twilio_webhook_url!r}. "
+                    "The route is /sms/webhook. Example: https://abc123.ngrok.io/sms/webhook"
+                ),
+            })
+
+    # Discord bot token set but no trusted users -- bot connects but silently rejects
+    # every message with a 403. Easy to miss because the bot appears healthy.
+    if cfg.discord_bot_token and len(trusted_discord) == 0:
+        risks.append({
+            "label": "DISCORD_BOT_TOKEN is set but no trusted Discord users are configured",
+            "detail": (
+                "The bot will connect and appear online but will reject every message with "
+                "UntrustedSenderError. Add user snowflake IDs to TRUSTED_DISCORD_USERS in identity.py."
+            ),
+        })
+
+    return risks
