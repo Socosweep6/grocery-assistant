@@ -126,3 +126,68 @@ def get_session_items(conn: sqlite3.Connection,
         " WHERE csi.session_id = ?",
         (session_id,),
     ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Source traceability
+# ---------------------------------------------------------------------------
+
+def insert_item_source(conn: sqlite3.Connection,
+                        item_id: int, event_id: int) -> None:
+    """Link a grocery item to the intake event that requested it."""
+    conn.execute(
+        "INSERT INTO grocery_item_sources (item_id, event_id) VALUES (?, ?)",
+        (item_id, event_id),
+    )
+    conn.commit()
+
+
+def get_items_by_sender(conn: sqlite3.Connection,
+                         sender: str) -> list[sqlite3.Row]:
+    """Return distinct pending items that were requested by a given sender."""
+    return conn.execute(
+        "SELECT DISTINCT gi.* FROM grocery_items gi"
+        " JOIN grocery_item_sources gis ON gi.id = gis.item_id"
+        " JOIN intake_events ie ON gis.event_id = ie.id"
+        " WHERE LOWER(ie.sender) = LOWER(?)"
+        " AND gi.status = 'pending'"
+        " ORDER BY gi.category, gi.canonical",
+        (sender,),
+    ).fetchall()
+
+
+def get_items_by_channel(conn: sqlite3.Connection,
+                          source_channel: str) -> list[sqlite3.Row]:
+    """Return distinct pending items that arrived via a given source channel."""
+    return conn.execute(
+        "SELECT DISTINCT gi.* FROM grocery_items gi"
+        " JOIN grocery_item_sources gis ON gi.id = gis.item_id"
+        " JOIN intake_events ie ON gis.event_id = ie.id"
+        " WHERE ie.source_channel = ?"
+        " AND gi.status = 'pending'"
+        " ORDER BY gi.category, gi.canonical",
+        (source_channel,),
+    ).fetchall()
+
+
+def get_source_events_for_item(conn: sqlite3.Connection,
+                                item_id: int) -> list[sqlite3.Row]:
+    """Return all intake events that contributed to a given grocery item."""
+    return conn.execute(
+        "SELECT ie.* FROM intake_events ie"
+        " JOIN grocery_item_sources gis ON ie.id = gis.event_id"
+        " WHERE gis.item_id = ?"
+        " ORDER BY ie.timestamp",
+        (item_id,),
+    ).fetchall()
+
+
+def update_item_quantity(conn: sqlite3.Connection,
+                          item_id: int, quantity: str,
+                          unit: str | None) -> None:
+    """Update the quantity and unit for an existing grocery item."""
+    conn.execute(
+        "UPDATE grocery_items SET quantity = ?, unit = ? WHERE id = ?",
+        (quantity, unit, item_id),
+    )
+    conn.commit()

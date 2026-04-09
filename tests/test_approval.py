@@ -14,7 +14,7 @@ import sqlite3
 import pytest
 from pathlib import Path
 
-from grocery_assistant.db import init_db, create_cart_session, get_session
+from grocery_assistant.db import create_cart_session, get_session
 from grocery_assistant.approval import (
     ApprovalError,
     submit_approval,

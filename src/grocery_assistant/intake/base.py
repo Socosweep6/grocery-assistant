@@ -7,7 +7,7 @@ The service layer calls process() and never touches source-specific details.
 
 import sqlite3
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from ..grocery_list import add_from_message
@@ -39,11 +39,13 @@ class IntakeAdapter(ABC):
             timestamp=timestamp,
         )
 
-    @abstractmethod
     def receive(self) -> list[dict]:
         """
         Fetch new messages from the source.
         Returns list of {raw_text, sender, timestamp} dicts.
-        Not implemented in MVP stubs.
+        Override in polling adapters. Webhook adapters use their own entry point.
         """
-        ...
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement polling. "
+            "Use the adapter-specific webhook/event method instead."
+        )

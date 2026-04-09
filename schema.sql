@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS cart_sessions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at  TEXT    NOT NULL,
     status      TEXT    NOT NULL DEFAULT 'draft'
-                    CHECK (status IN ('draft', 'awaiting_approval', 'approved', 'cancelled'))
+                    CHECK (status IN ('draft', 'needs_clarification', 'awaiting_approval', 'approved', 'cancelled'))
 );
 
 CREATE TABLE IF NOT EXISTS cart_session_items (

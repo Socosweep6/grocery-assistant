@@ -4,13 +4,19 @@ Instacart-ready order draft generation.
 Produces a structured, reviewable draft from pending grocery items.
 This module does NOT submit anything. It only generates output for review.
 
+Status rules:
+  - If any items are ambiguous: status = 'needs_clarification'
+    The session cannot be approved until ambiguities are resolved.
+  - If no ambiguous items: status = 'awaiting_approval'
+    Vern may then approve with an explicit phrase.
+
 The draft format is designed to be:
 - Human-readable for Vern to review before approving
 - Structured enough to drive manual Instacart search in phase 2
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from .db import (
@@ -31,7 +37,7 @@ def create_draft(conn: sqlite3.Connection) -> dict:
     - session_id: the cart session ID (use this for approval)
     - items: list of item dicts ready for Instacart search
     - ambiguous: items that need clarification
-    - status: always 'awaiting_approval' (never 'approved')
+    - status: 'needs_clarification' if ambiguous items exist, else 'awaiting_approval'
     - instructions: what Vern needs to do next
     """
     pending = get_pending_items(conn)
@@ -61,21 +67,33 @@ def create_draft(conn: sqlite3.Connection) -> dict:
         else:
             draft_items.append(item_dict)
 
-    update_session_status(conn, session_id, "awaiting_approval")
+    # Status depends on whether there are unresolved ambiguities
+    if flagged_items:
+        status = "needs_clarification"
+        instructions = (
+            "Resolve the flagged items before approving. "
+            "Each flagged item needs more detail (e.g. 'oat milk' not 'milk'). "
+            "Once all ambiguities are resolved, a new draft can be approved."
+        )
+    else:
+        status = "awaiting_approval"
+        instructions = (
+            "Review the items below. "
+            "To approve, say: 'approve order', 'place this order', "
+            "or 'go ahead and submit'."
+        )
+
+    update_session_status(conn, session_id, status)
 
     return {
         "session_id": session_id,
-        "created_at": datetime.utcnow().isoformat(),
-        "status": "awaiting_approval",
+        "created_at": datetime.now(UTC).isoformat(),
+        "status": status,
         "items": draft_items,
         "ambiguous": flagged_items,
         "item_count": len(draft_items),
         "flagged_count": len(flagged_items),
-        "instructions": (
-            "Review the items below. Resolve any flagged ambiguities. "
-            "To approve, say: 'approve order', 'place this order', "
-            "or 'go ahead and submit'."
-        ),
+        "instructions": instructions,
     }
 
 

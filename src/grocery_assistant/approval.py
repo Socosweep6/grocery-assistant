@@ -115,6 +115,11 @@ def submit_approval(conn: sqlite3.Connection, session_id: int,
         raise ApprovalError(
             f"Session {session_id} is cancelled and cannot be approved."
         )
+    if session["status"] == "needs_clarification":
+        raise ApprovalError(
+            f"Session {session_id} has unresolved ambiguous items. "
+            "Clarify or remove flagged items before approving."
+        )
 
     # 4. Phrase check -- check rejected list first for clear error messages
     normalized = _normalize_phrase(phrase)
