@@ -208,7 +208,7 @@ The `/sms/webhook` route returns TwiML XML on success, which Twilio uses to send
 3. Enable MESSAGE_CONTENT intent (required to read message text)
 4. Invite the bot to your server with Send Messages + Read Message History permissions
 5. Add the Discord user IDs for trusted senders to `TRUSTED_DISCORD_USERS` in `src/grocery_assistant/identity.py`
-6. Set `DISCORD_BOT_TOKEN=your_bot_token`
+6. Set `DISCORD_BOT_TOKEN=***`
 7. Optionally set `GROCERY_DISCORD_CHANNEL_ID=channel_id` to restrict to one channel
 8. Run: `pip install discord.py && python -m grocery_assistant.bridges.discord_bridge`
 
