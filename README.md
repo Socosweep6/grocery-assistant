@@ -77,12 +77,37 @@ Operator surface
 
 Requires Python 3.11+. Flask is the only runtime dependency beyond the standard library.
 
+**Step 1 — install Flask:**
+
 ```bash
-# Ubuntu / WSL
+# Ubuntu / WSL (system Python, no pip)
 sudo apt-get install python3-flask
 
 # Or via pip if available
 python3 -m pip install flask
+```
+
+**Step 2 — register the package so `python3 -m grocery_assistant.*` works from the repo root:**
+
+The repo uses a `src/` layout. Python won't find the package until you register it. The fastest way without a venv is a `.pth` file in your user site-packages:
+
+```bash
+mkdir -p ~/.local/lib/python3.12/site-packages
+echo "$(pwd)/src" > ~/.local/lib/python3.12/site-packages/grocery-assistant.pth
+```
+
+If you're on Python 3.11 instead of 3.12, replace `python3.12` with `python3.11`. Confirm your version with `python3 --version`.
+
+If you have pip, use an editable install instead — it's equivalent and more standard:
+
+```bash
+pip install -e .
+```
+
+After either step, verify it worked:
+
+```bash
+python3 -m grocery_assistant.cli --help
 ```
 
 No real Twilio account or Discord bot token is required for local operation.
