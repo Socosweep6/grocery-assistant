@@ -17,6 +17,7 @@ Commands:
     history <item_id>           Show clarification history for an item
     inspect <item_id>           Show full details and source events for an item
     remove <item_id>            Safely remove an item (marks removed, preserves audit trail)
+    doctor                      Check setup readiness (Twilio, Discord, DB, trusted senders)
 
 All commands use the default database (grocery.db) unless GROCERY_DB_PATH is set.
 """
@@ -239,6 +240,90 @@ def cmd_prefs(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Check setup readiness: Twilio, Discord, DB, trusted senders, importability."""
+    import importlib
+    from pathlib import Path
+    from .config import load_env_config, get_readiness
+    from .identity import TRUSTED_SMS_SENDERS, TRUSTED_DISCORD_USERS
+    from .db import DEFAULT_DB_PATH
+
+    cfg = load_env_config()
+
+    # --- importability checks ---
+    import_checks = []
+    for mod in ("grocery_assistant", "flask"):
+        try:
+            importlib.import_module(mod)
+            import_checks.append(("ok", f"{mod}: importable"))
+        except ImportError as exc:
+            import_checks.append(("miss", f"{mod}: import failed -- {exc}"))
+
+    # --- DB check ---
+    db_path_str = cfg.db_path
+    db_path = Path(db_path_str) if db_path_str else DEFAULT_DB_PATH
+    if db_path.exists():
+        size_kb = db_path.stat().st_size // 1024
+        db_check = ("ok", f"Database: {db_path} ({size_kb} KB)")
+    else:
+        db_check = ("warn", f"Database: {db_path} -- not found, will be created on first use")
+
+    # --- env / identity checks ---
+    result = get_readiness(cfg, TRUSTED_SMS_SENDERS, TRUSTED_DISCORD_USERS)
+
+    # --- print report ---
+    SYMBOLS = {"ok": "[OK]  ", "warn": "[WARN]", "miss": "[MISS]"}
+
+    print("Grocery Assistant -- Setup Check")
+    print("=" * 36)
+    print()
+
+    for status, label in import_checks:
+        print(f"  {SYMBOLS[status]}  {label}")
+
+    status, label = db_check
+    print(f"  {SYMBOLS[status]}  {label}")
+
+    for check in result["checks"]:
+        sym = SYMBOLS[check["status"]]
+        detail = f"  ({check['detail']})" if check["detail"] else ""
+        print(f"  {sym}  {check['label']}{detail}")
+
+    print()
+    print("Modes:")
+
+    modes = result["modes"]
+
+    local = modes["local_simulation"]
+    print(f"  Local simulation :   {'READY' if local['ready'] else 'NOT READY'}")
+
+    twilio = modes["twilio_live"]
+    if twilio["ready"]:
+        print("  Twilio live      :   READY")
+    else:
+        missing = ", ".join(twilio["missing"])
+        print(f"  Twilio live      :   BLOCKED  (missing: {missing})")
+
+    discord = modes["discord_live"]
+    if discord["ready"]:
+        print("  Discord live     :   READY")
+    else:
+        missing = ", ".join(discord["missing"])
+        print(f"  Discord live     :   BLOCKED  (missing: {missing})")
+
+    print()
+
+    any_blocked = not twilio["ready"] or not discord["ready"]
+    if any_blocked:
+        print("To go live:")
+        print("  1. Copy env.example to .env and fill in real values")
+        print("  2. Edit src/grocery_assistant/identity.py with real phone numbers / Discord user IDs")
+        print("  3. source .env  (or export vars in your shell)")
+        print("  4. python3 -m grocery_assistant.cli doctor")
+    else:
+        print("Everything looks configured. Run the web server and test a real webhook.")
+
+
 def cmd_history(args: argparse.Namespace) -> None:
     from .clarification import get_resolution_history
     conn = _get_conn()
@@ -313,6 +398,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_prefs_remove = prefs_sub.add_parser("remove", help="Delete a preference rule")
     p_prefs_remove.add_argument("canonical", help="Canonical item name to remove")
 
+    # doctor
+    sub.add_parser(
+        "doctor",
+        help="Check setup readiness (Twilio, Discord, DB, trusted senders)",
+    )
+
     return parser
 
 
@@ -327,6 +418,7 @@ COMMANDS = {
     "inspect": cmd_inspect,
     "remove": cmd_remove,
     "prefs": cmd_prefs,
+    "doctor": cmd_doctor,
 }
 
 

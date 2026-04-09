@@ -4,7 +4,7 @@ Household grocery assistant with Discord + SMS intake, shared grocery list, Inst
 
 ## Status
 
-Phase 5 complete. TwiML SMS responses, preferences system, draft diff (new-since-last-draft), `prefs` CLI subcommand, `/api/preferences` routes, Twilio and Discord setup documentation. 331 tests passing.
+Phase 6 complete. Added `doctor` readiness command, `config.py` env module, `env.example` template, and 27 new tests. 358 tests passing. The remaining work to go live is filling in real credentials and phone/user IDs -- no code changes needed.
 
 ## What It Does
 
@@ -66,7 +66,38 @@ No real Twilio account or Discord bot token required for local operation.
 python3 -m pytest tests/ -v
 ```
 
-Expected: 331 passed.
+Expected: 358 passed.
+
+## Readiness Check
+
+Run this before attempting any live hookup. It checks imports, database, trusted sender registries, and all required env vars, then reports which modes are ready.
+
+```bash
+python3 -m grocery_assistant.cli doctor
+```
+
+Example output:
+
+```
+Grocery Assistant -- Setup Check
+====================================
+
+  [OK]    grocery_assistant: importable
+  [OK]    flask: importable
+  [OK]    Database: grocery.db (48 KB)
+  [WARN]  Trusted SMS senders: 0 configured  (Add real phone numbers to TRUSTED_SMS_SENDERS in identity.py)
+  [WARN]  Trusted Discord users: 0 configured  (Add real user IDs to TRUSTED_DISCORD_USERS in identity.py)
+  [MISS]  TWILIO_AUTH_TOKEN  (not set -- required for live Twilio hookup)
+  [WARN]  TWILIO_VALIDATE_SIGNATURE  (not set -- dev mode, signature check disabled)
+  [MISS]  TWILIO_WEBHOOK_URL  (not set -- required when running behind ngrok or a reverse proxy)
+  [MISS]  DISCORD_BOT_TOKEN  (not set -- required to run the Discord bot bridge)
+  [OK]    GROCERY_DISCORD_CHANNEL_ID  (not set -- bot will listen on all channels)
+
+Modes:
+  Local simulation :   READY
+  Twilio live      :   BLOCKED  (missing: trusted SMS numbers in identity.py, TWILIO_AUTH_TOKEN, TWILIO_WEBHOOK_URL)
+  Discord live     :   BLOCKED  (missing: trusted Discord users in identity.py, DISCORD_BOT_TOKEN)
+```
 
 ## CLI Commands
 
@@ -192,25 +223,62 @@ The `author.id` must match an entry in `TRUSTED_DISCORD_USERS` in `identity.py`.
 
 ## Twilio Hookup
 
+What Vern will need to fill in before going live:
+
+| What | Where |
+|------|-------|
+| Twilio phone number (E.164, e.g. `+12065551234`) | `TRUSTED_SMS_SENDERS` in `src/grocery_assistant/identity.py` |
+| Twilio Auth Token | `TWILIO_AUTH_TOKEN` in your shell / `.env` |
+| Public webhook URL (ngrok or tunnel) | `TWILIO_WEBHOOK_URL` in your shell / `.env` |
+
+Steps:
+
 1. Buy/provision a number at twilio.com/console
-2. Add the phone number to `TRUSTED_SMS_SENDERS` in `src/grocery_assistant/identity.py`
-3. Set `TWILIO_AUTH_TOKEN` in your environment
-4. Set `TWILIO_VALIDATE_SIGNATURE=1` in your environment
-5. Set `TWILIO_WEBHOOK_URL` to your public ngrok/tunnel URL
-6. Point the Twilio number's inbound SMS webhook to: `https://your-url/sms/webhook`
+2. Copy `env.example` to `.env` and fill in `TWILIO_AUTH_TOKEN`, `TWILIO_VALIDATE_SIGNATURE=1`, and `TWILIO_WEBHOOK_URL`
+3. `source .env`
+4. Add the phone number to `TRUSTED_SMS_SENDERS` in `src/grocery_assistant/identity.py`
+5. Start ngrok: `ngrok http 5000`
+6. Update `TWILIO_WEBHOOK_URL` with the ngrok URL
+7. Point the Twilio number's inbound SMS webhook to: `https://your-ngrok-url/sms/webhook`
+8. Run: `python3 -m grocery_assistant.cli doctor` -- confirm Twilio live shows READY
+9. Start the web server: `python3 -m grocery_assistant.web`
 
 The `/sms/webhook` route returns TwiML XML on success, which Twilio uses to send a reply SMS.
 
+Signature verification is optional in dev (skipped when `TWILIO_VALIDATE_SIGNATURE` is unset). Set it to `1` before exposing the webhook publicly.
+
 ## Discord Bot Hookup
+
+What Vern will need to fill in before going live:
+
+| What | Where |
+|------|-------|
+| Discord user snowflake IDs (18-digit integers) | `TRUSTED_DISCORD_USERS` in `src/grocery_assistant/identity.py` |
+| Discord bot token | `DISCORD_BOT_TOKEN` in your shell / `.env` |
+| (Optional) channel ID to restrict the bot | `GROCERY_DISCORD_CHANNEL_ID` in your shell / `.env` |
+
+Steps:
 
 1. Create an application at discord.com/developers/applications
 2. Create a Bot under your application
-3. Enable MESSAGE_CONTENT intent (required to read message text)
+3. Enable the MESSAGE_CONTENT intent (Bot -> Privileged Gateway Intents)
 4. Invite the bot to your server with Send Messages + Read Message History permissions
-5. Add the Discord user IDs for trusted senders to `TRUSTED_DISCORD_USERS` in `src/grocery_assistant/identity.py`
-6. Set `DISCORD_BOT_TOKEN=***`
-7. Optionally set `GROCERY_DISCORD_CHANNEL_ID=channel_id` to restrict to one channel
-8. Run: `pip install discord.py && python -m grocery_assistant.bridges.discord_bridge`
+5. Find each trusted user's snowflake ID (right-click their name -> Copy User ID with Developer Mode on)
+6. Add IDs to `TRUSTED_DISCORD_USERS` in `src/grocery_assistant/identity.py`
+7. Copy `env.example` to `.env`, fill in `DISCORD_BOT_TOKEN`, then `source .env`
+8. Run: `python3 -m grocery_assistant.cli doctor` -- confirm Discord live shows READY
+9. Start the web server and bridge:
+
+```bash
+# Terminal 1
+python3 -m grocery_assistant.web
+
+# Terminal 2
+pip install discord.py
+python3 -m grocery_assistant.bridges.discord_bridge
+```
+
+Identity is resolved from author snowflake ID, not username. Usernames can change; IDs are permanent.
 
 ## Reviewing a Draft
 
@@ -291,7 +359,9 @@ Messages from unrecognized senders are rejected before anything is written to th
 ```
 grocery-assistant/
   schema.sql                  # SQLite schema (8 tables + preferences)
+  env.example                 # Copy to .env and fill in real values
   src/grocery_assistant/
+    config.py                 # Centralized env var reading + readiness logic
     db.py                     # All SQLite queries + apply_migrations()
     models.py                 # Dataclasses: IntakeEvent, GroceryItem, CartSession, Approval
     normalizer.py             # Parse, normalize, categorize, flag ambiguity
@@ -301,7 +371,7 @@ grocery-assistant/
     approval.py               # Hard approval gate with phrase allowlist
     draft.py                  # Draft generation: preference notes, draft diff
     preferences.py            # Preference rules: set/get/list/delete/format
-    cli.py                    # Operator CLI (9 commands including prefs)
+    cli.py                    # Operator CLI (10 commands including prefs + doctor)
     web.py                    # Flask app: Twilio/Discord routes + operator API
     twilio_sig.py             # HMAC-SHA1 Twilio signature verification
     intake/
@@ -322,6 +392,7 @@ grocery-assistant/
     test_twilio_sig.py
     test_preferences.py
     test_draft_diff.py
+    test_doctor.py            # config.py and doctor command tests
 ```
 
 ## What Is Not Implemented
