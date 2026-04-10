@@ -4,7 +4,7 @@ Household grocery assistant with Discord + SMS intake, shared grocery list, Inst
 
 ## Status
 
-Phase 6 complete. Added `doctor` readiness command, `config.py` env module, `env.example` template, and 27 new tests. 358 tests passing. The remaining work to go live is filling in real credentials and phone/user IDs -- no code changes needed.
+Phase 2 shopping handoff is now implemented on top of the mobile web UI. Approved drafts can now open a phone-friendly Instacart handoff page with per-item deep links, and Vern can manually mark the draft ordered after checkout so those items leave the active grocery list.
 
 ## What It Does
 
@@ -20,6 +20,8 @@ Phase 6 complete. Added `doctor` readiness command, `config.py` env module, `env
 - Shows items added since the previous draft (draft diff)
 - Generates an Instacart-ready order draft
 - Enforces a hard approval gate: only Vern can approve, only explicit phrases count, per session only
+- Gives approved drafts a mobile shopping handoff page with per-item Instacart search links
+- Lets Vern manually mark a shopping session ordered after Instacart checkout, moving linked items off the active list
 
 ## Safety Rules
 
@@ -66,7 +68,7 @@ No real Twilio account or Discord bot token required for local operation.
 python3 -m pytest tests/ -v
 ```
 
-Expected: 358 passed.
+Expected: 432 passed.
 
 ## Readiness Check
 
@@ -168,7 +170,7 @@ The web server includes a phone-friendly browser interface. All pages are server
 BROWSER_TOKEN=your-secret-token FLASK_SECRET_KEY=your-secret-key python3 -m grocery_assistant.web
 ```
 
-`BROWSER_TOKEN` is a shared household password. Set it to any strong random string. If unset, write actions (draft creation and approval) are blocked.
+`BROWSER_TOKEN` is a shared household password. Set it to any strong random string. If unset, write actions (draft creation, approval, and marking a session ordered) are blocked.
 
 `FLASK_SECRET_KEY` keeps browser sessions valid across server restarts. If unset, a random key is generated each restart (sessions invalidated on restart).
 
@@ -181,15 +183,20 @@ BROWSER_TOKEN=your-secret-token FLASK_SECRET_KEY=your-secret-key python3 -m groc
 | `http://localhost:5000/flagged` | Items needing clarification | No |
 | `http://localhost:5000/drafts/new` | Preview pending items before creating a draft | No (read) / Yes (create) |
 | `http://localhost:5000/drafts/<id>` | Draft detail and approve button | No (read) / Yes (approve) |
+| `http://localhost:5000/drafts/<id>/shop` | Shopping handoff with Instacart search links | No (read) / Yes (mark ordered) |
 | `http://localhost:5000/login` | Token login | No |
 
-### Approval flow in the browser
+### Approval + shopping handoff flow in the browser
 
 1. Go to `/drafts/new`, review the list, tap **Create draft**.
 2. On the draft detail page, if status is `awaiting_approval`, tap **Approve order**.
 3. The existing four-check gate runs: approver must be Vern, session must exist, status must be `awaiting_approval`, phrase must match. All checks are enforced server-side regardless of what the browser sends.
+4. After approval, open `/drafts/<id>/shop` or tap **Open shopping handoff** from the draft page.
+5. Use the per-item Instacart links on phone, then complete product selection and checkout manually inside Instacart.
+6. Return to the shopping handoff page and tap **I finished checkout — mark ordered**.
+7. Linked grocery items move to `ordered` and disappear from the active grocery list.
 
-Items flagged as ambiguous block approval until resolved via CLI.
+Items flagged as ambiguous still block approval until resolved via CLI or API. No Instacart checkout is ever auto-submitted from this app.
 
 ### Via ngrok (share with phone on another network)
 

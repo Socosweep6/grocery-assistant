@@ -213,7 +213,8 @@ Suggested tables:
 - Instacart-ready draft output
 
 ### Phase 2
-- browser-assisted Instacart cart drafting
+- browser-assisted Instacart shopping handoff with per-item deep links
+- manual post-checkout ordered confirmation that clears active items
 - substitution preferences
 - recurring staples
 - improved heuristics

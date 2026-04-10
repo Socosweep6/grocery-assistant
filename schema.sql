@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS grocery_item_sources (
 CREATE TABLE IF NOT EXISTS cart_sessions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at  TEXT    NOT NULL,
+    ordered_at  TEXT,
     status      TEXT    NOT NULL DEFAULT 'draft'
                     CHECK (status IN ('draft', 'needs_clarification', 'awaiting_approval', 'approved', 'cancelled'))
 );

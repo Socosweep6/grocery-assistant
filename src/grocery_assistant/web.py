@@ -70,6 +70,7 @@ from .clarification import (
 )
 from .twilio_sig import verify_signature as twilio_verify_signature
 from .approval import submit_approval, ApprovalError
+from .shopping import build_shopping_handoff, complete_shopping_handoff, ShoppingHandoffError
 from .preferences import (
     list_preferences,
     set_preference,
@@ -499,6 +500,39 @@ def create_app(conn: sqlite3.Connection | None = None,
         except ApprovalError as exc:
             flash(str(exc), "error")
         return redirect(url_for("ui_draft_detail", session_id=session_id))
+
+    @app.route("/drafts/<int:session_id>/shop", methods=["GET"])
+    def ui_draft_shop(session_id: int):
+        conn_ = _get_conn()
+        sess = get_session(conn_, session_id)
+        if sess is None:
+            abort(404)
+        try:
+            handoff = build_shopping_handoff(conn_, session_id)
+        except ShoppingHandoffError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("ui_draft_detail", session_id=session_id))
+        return render_template("shop.html", handoff=handoff)
+
+    @app.route("/drafts/<int:session_id>/ordered", methods=["POST"])
+    def ui_draft_mark_ordered(session_id: int):
+        if not _logged_in():
+            flash("Login required to mark a draft ordered.", "error")
+            return redirect(url_for("login"))
+        conn_ = _get_conn()
+        try:
+            result = complete_shopping_handoff(conn_, session_id, ordered_by="vern")
+            if result["already_ordered"]:
+                flash("Draft already marked ordered.", "success")
+            else:
+                flash(
+                    f"Draft marked ordered. {result['updated_items']} items moved off the active grocery list.",
+                    "success",
+                )
+        except ShoppingHandoffError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("ui_draft_detail", session_id=session_id))
+        return redirect(url_for("ui_draft_shop", session_id=session_id))
 
     @app.route("/login", methods=["GET"])
     def login():

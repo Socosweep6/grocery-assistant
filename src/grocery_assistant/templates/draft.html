@@ -2,7 +2,16 @@
 {% block title %}Draft #{{ sess.id }}{% endblock %}
 {% block content %}
 <h1>Draft #{{ sess.id }}</h1>
-<p class="meta">Status: <span class="status-{{ sess.status }}">{{ sess.status | replace("_", " ") }}</span></p>
+<p class="meta">Status:
+  {% if sess.ordered_at %}
+    <span class="status-ordered">ordered</span>
+  {% else %}
+    <span class="status-{{ sess.status }}">{{ sess.status | replace("_", " ") }}</span>
+  {% endif %}
+</p>
+{% if sess.ordered_at %}
+  <p class="meta">Marked ordered: {{ sess.ordered_at }}</p>
+{% endif %}
 
 {% if not items %}
   <div class="empty-state">No items in this draft.</div>
@@ -16,6 +25,8 @@
         {% endif %}
         {% if item.ambiguous %}
           <span class="badge badge-warn">needs clarification</span>
+        {% elif item.status == "ordered" %}
+          <span class="badge badge-success">ordered</span>
         {% endif %}
         <span class="badge badge-muted">{{ item.category }}</span>
       </div>
@@ -34,8 +45,12 @@
   </div>
 {% elif sess.status == "needs_clarification" %}
   <div class="flash warning">Some items need clarification before this draft can be approved. <a href="/flagged">Resolve flagged items.</a></div>
+{% elif sess.ordered_at %}
+  <div class="flash success">Manual Instacart checkout is complete for this draft. <a href="/drafts/{{ sess.id }}/shop">View shopping handoff details.</a></div>
 {% elif sess.status == "approved" %}
   <div class="flash success">Order approved. Complete checkout in Instacart.</div>
+  <a href="/drafts/{{ sess.id }}/shop" class="btn btn-primary">Open shopping handoff</a>
+  <p class="note">The shopping handoff page gives you tap-friendly Instacart search links for each item and a manual completion step after checkout.</p>
 {% elif sess.status == "cancelled" %}
   <div class="flash error">This draft has been cancelled.</div>
 {% endif %}

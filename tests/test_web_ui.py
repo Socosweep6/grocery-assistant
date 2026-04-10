@@ -9,6 +9,8 @@ Covers:
 - POST /drafts/new     -- create draft (auth required)
 - GET  /drafts/<id>    -- draft detail
 - POST /drafts/<id>/approve -- approve draft (auth required)
+- GET  /drafts/<id>/shop -- shopping handoff page for approved drafts
+- POST /drafts/<id>/ordered -- mark manual checkout complete (auth required)
 - GET  /login          -- login page
 - POST /login          -- token submit
 - GET  /logout         -- clear session
@@ -225,6 +227,15 @@ class TestUiDraftDetail:
         resp = client.get(f"/drafts/{draft['session_id']}")
         assert b"Approve order" in resp.data
 
+    def test_get_draft_detail_approved_shows_shopping_handoff_link(self, authed_client, conn):
+        add_from_message(conn, "bananas", "discord", "vern")
+        draft = authed_client.post("/api/draft").get_json()
+        sid = draft["session_id"]
+        authed_client.post(f"/drafts/{sid}/approve")
+        resp = authed_client.get(f"/drafts/{sid}")
+        assert b"Open shopping handoff" in resp.data
+        assert f"/drafts/{sid}/shop".encode() in resp.data
+
     def test_get_draft_detail_needs_clarification_no_approve_button(self, client, conn):
         add_from_message(conn, "milk", "sms", "cara")  # ambiguous
         draft = client.post("/api/draft").get_json()
@@ -287,6 +298,60 @@ class TestUiDraftApprove:
         resp = authed_client.post("/drafts/9999/approve", follow_redirects=True)
         # Route tries to redirect to draft detail, which 404s or shows error flash
         assert resp.status_code in (200, 404)
+
+
+# ---------------------------------------------------------------------------
+# GET /drafts/<id>/shop  /  POST /drafts/<id>/ordered
+# ---------------------------------------------------------------------------
+
+class TestUiDraftShop:
+    def test_get_shop_requires_approved_draft(self, client, conn):
+        add_from_message(conn, "bananas", "discord", "vern")
+        draft = client.post("/api/draft").get_json()
+        resp = client.get(f"/drafts/{draft['session_id']}/shop", follow_redirects=True)
+        assert resp.status_code == 200
+        assert b"Approve this draft before opening the shopping handoff" in resp.data
+
+    def test_get_shop_for_approved_draft_shows_instacart_link(self, authed_client, conn):
+        add_from_message(conn, "bananas", "discord", "vern")
+        draft = authed_client.post("/api/draft").get_json()
+        sid = draft["session_id"]
+        authed_client.post(f"/drafts/{sid}/approve")
+        resp = authed_client.get(f"/drafts/{sid}/shop")
+        assert resp.status_code == 200
+        assert b"Open Instacart search" in resp.data
+        assert b"instacart.com/store/search_v3/term?term=bananas" in resp.data
+        assert b"never submits the Instacart order for you" in resp.data
+
+    def test_post_ordered_unauthenticated_redirects_to_login(self, client, conn):
+        add_from_message(conn, "bananas", "discord", "vern")
+        draft = client.post("/api/draft").get_json()
+        resp = client.post(f"/drafts/{draft['session_id']}/ordered", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "login" in resp.headers["Location"]
+
+    def test_post_ordered_authenticated_moves_items_off_active_list(self, authed_client, conn):
+        add_from_message(conn, "bananas, eggs", "discord", "vern")
+        draft = authed_client.post("/api/draft").get_json()
+        sid = draft["session_id"]
+        authed_client.post(f"/drafts/{sid}/approve")
+        resp = authed_client.post(f"/drafts/{sid}/ordered", follow_redirects=True)
+        assert resp.status_code == 200
+        assert b"Draft marked ordered" in resp.data
+        assert authed_client.get("/api/list").get_json() == []
+        detail = authed_client.get(f"/api/draft/{sid}").get_json()
+        assert detail["session"]["ordered_at"] is not None
+        assert all(item["status"] == "ordered" for item in detail["items"])
+
+    def test_post_ordered_second_time_is_safe(self, authed_client, conn):
+        add_from_message(conn, "bananas", "discord", "vern")
+        draft = authed_client.post("/api/draft").get_json()
+        sid = draft["session_id"]
+        authed_client.post(f"/drafts/{sid}/approve")
+        authed_client.post(f"/drafts/{sid}/ordered")
+        resp = authed_client.post(f"/drafts/{sid}/ordered", follow_redirects=True)
+        assert resp.status_code == 200
+        assert b"already marked ordered" in resp.data.lower()
 
 
 # ---------------------------------------------------------------------------

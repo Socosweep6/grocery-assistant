@@ -35,6 +35,14 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+    cart_session_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(cart_sessions)").fetchall()
+    }
+    if "ordered_at" not in cart_session_columns:
+        conn.execute("ALTER TABLE cart_sessions ADD COLUMN ordered_at TEXT")
+
     conn.commit()
 
 
@@ -125,6 +133,26 @@ def get_session(conn: sqlite3.Connection, session_id: int) -> Optional[sqlite3.R
     return conn.execute(
         "SELECT * FROM cart_sessions WHERE id = ?", (session_id,)
     ).fetchone()
+
+
+def mark_session_ordered(conn: sqlite3.Connection,
+                         session_id: int,
+                         ordered_at: Optional[datetime] = None) -> int:
+    """Mark a cart session complete and move its linked items to ordered."""
+    ts = (ordered_at or datetime.now(UTC)).isoformat()
+    cur = conn.execute(
+        "UPDATE grocery_items"
+        " SET status = 'ordered'"
+        " WHERE id IN (SELECT item_id FROM cart_session_items WHERE session_id = ?)"
+        " AND status IN ('pending', 'reviewed', 'drafted')",
+        (session_id,),
+    )
+    conn.execute(
+        "UPDATE cart_sessions SET ordered_at = ? WHERE id = ?",
+        (ts, session_id),
+    )
+    conn.commit()
+    return cur.rowcount
 
 
 def record_approval(conn: sqlite3.Connection, session_id: int,

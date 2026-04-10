@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Shop Draft #{{ handoff['session']['id'] }}{% endblock %}
+{% block content %}
+<h1>Shop Draft #{{ handoff['session']['id'] }}</h1>
+<p class="meta">Use these links on your phone to open Instacart searches for each item.</p>
+
+<div class="flash warning">
+  {{ handoff['manual_checkout_note'] }}
+</div>
+
+{% if handoff['ordered'] %}
+  <div class="flash success">This draft was already marked ordered at {{ handoff['session']['ordered_at'] }}.</div>
+{% endif %}
+
+{% if not handoff['items'] %}
+  <div class="empty-state">No items in this shopping handoff.</div>
+{% else %}
+  <div class="shop-list">
+    {% for item in handoff['items'] %}
+      <section class="card shop-card">
+        <div class="shop-card-head">
+          <div>
+            <div class="item-name">{{ item['name'] }}</div>
+            <div class="item-meta">
+              Search: <code>{{ item['search_term'] }}</code>
+              {% if item['quantity'] %}
+                · qty {{ item['quantity'] }}{% if item['unit'] %} {{ item['unit'] }}{% endif %}
+              {% endif %}
+            </div>
+          </div>
+          <span class="badge badge-muted">{{ item['category'] }}</span>
+        </div>
+
+        {% if item['preference_note'] %}
+          <p class="shop-note"><strong>Preference:</strong> {{ item['preference_note'] }}</p>
+        {% endif %}
+        {% if item['notes'] %}
+          <p class="shop-note"><strong>Notes:</strong> {{ item['notes'] }}</p>
+        {% endif %}
+
+        <a class="btn btn-primary" href="{{ item['instacart_url'] }}" target="_blank" rel="noopener noreferrer">
+          Open Instacart search
+        </a>
+      </section>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<div class="approve-box">
+  <h2>After you finish in Instacart</h2>
+  <p>When manual checkout is done, mark this draft ordered so these items leave the active grocery list.</p>
+  {% if handoff['ordered'] %}
+    <a href="/drafts/{{ handoff['session']['id'] }}" class="btn btn-secondary">Back to draft</a>
+  {% else %}
+    <form method="post" action="/drafts/{{ handoff['session']['id'] }}/ordered">
+      <button type="submit" class="btn btn-secondary">I finished checkout — mark ordered</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}
