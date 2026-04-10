@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Flagged Items{% endblock %}
+{% block content %}
+<h1>Flagged Items</h1>
+
+{% if not items %}
+  <div class="empty-state">No flagged items. Everything looks clear.</div>
+{% else %}
+  <p class="meta">These items need clarification before they can be included in an order.</p>
+  <div class="card">
+    {% for item in items %}
+      <div class="item">
+        <span class="item-name">{{ item.name }}</span>
+        <span class="badge badge-warn">{{ item.canonical }}</span>
+      </div>
+    {% endfor %}
+  </div>
+  <p class="note">Resolve via CLI: <code>python -m grocery_assistant.cli resolve &lt;id&gt; "specific name"</code></p>
+{% endif %}
+{% endblock %}

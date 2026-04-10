@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Draft #{{ sess.id }}{% endblock %}
+{% block content %}
+<h1>Draft #{{ sess.id }}</h1>
+<p class="meta">Status: <span class="status-{{ sess.status }}">{{ sess.status | replace("_", " ") }}</span></p>
+
+{% if not items %}
+  <div class="empty-state">No items in this draft.</div>
+{% else %}
+  <div class="card">
+    {% for item in items %}
+      <div class="item">
+        <span class="item-name">{{ item.name }}</span>
+        {% if item.quantity %}
+          <span class="item-meta">x{{ item.quantity }}{% if item.unit %} {{ item.unit }}{% endif %}</span>
+        {% endif %}
+        {% if item.ambiguous %}
+          <span class="badge badge-warn">needs clarification</span>
+        {% endif %}
+        <span class="badge badge-muted">{{ item.category }}</span>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if sess.status == "awaiting_approval" %}
+  <div class="approve-box">
+    <h2>Approve this order</h2>
+    <p>Only Vern can approve. No order is placed automatically — you still complete checkout in Instacart.</p>
+    <form method="post" action="/drafts/{{ sess.id }}/approve">
+      <button type="submit" class="btn btn-danger">Approve order</button>
+    </form>
+    <p class="note">This approves the draft for ordering. Nothing is submitted automatically.</p>
+  </div>
+{% elif sess.status == "needs_clarification" %}
+  <div class="flash warning">Some items need clarification before this draft can be approved. <a href="/flagged">Resolve flagged items.</a></div>
+{% elif sess.status == "approved" %}
+  <div class="flash success">Order approved. Complete checkout in Instacart.</div>
+{% elif sess.status == "cancelled" %}
+  <div class="flash error">This draft has been cancelled.</div>
+{% endif %}
+{% endblock %}

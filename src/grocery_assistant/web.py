@@ -38,7 +38,10 @@ import os
 import sqlite3
 from pathlib import Path
 
-from flask import Flask, request, jsonify, g, Response
+from flask import (
+    Flask, request, jsonify, g, Response,
+    render_template, redirect, url_for, session, flash, abort,
+)
 
 from .db import (
     get_connection,
@@ -66,6 +69,7 @@ from .clarification import (
     ClarificationError,
 )
 from .twilio_sig import verify_signature as twilio_verify_signature
+from .approval import submit_approval, ApprovalError
 from .preferences import (
     list_preferences,
     set_preference,
@@ -101,7 +105,9 @@ def _check_twilio_signature() -> bool:
 
 def create_app(conn: sqlite3.Connection | None = None,
                trusted_sms: dict | None = None,
-               trusted_discord: dict | None = None) -> Flask:
+               trusted_discord: dict | None = None,
+               browser_token: str | None = None,
+               secret_key: bytes | str | None = None) -> Flask:
     """
     Flask application factory.
 
@@ -118,6 +124,20 @@ def create_app(conn: sqlite3.Connection | None = None,
 
     _trusted_sms = trusted_sms if trusted_sms is not None else TRUSTED_SMS_SENDERS
     _trusted_discord = trusted_discord if trusted_discord is not None else TRUSTED_DISCORD_USERS
+
+    _browser_token = (
+        browser_token if browser_token is not None
+        else os.environ.get("BROWSER_TOKEN", "")
+    )
+    _secret_key = (
+        secret_key if secret_key is not None
+        else (os.environ.get("FLASK_SECRET_KEY", "").encode() or os.urandom(24))
+    )
+    app.secret_key = _secret_key
+    app.config["BROWSER_TOKEN"] = _browser_token
+
+    def _logged_in() -> bool:
+        return session.get("logged_in") is True
 
     # If a shared connection is provided (e.g. in tests), use it for all requests.
     # Otherwise open a per-request connection from the DB path.
@@ -410,6 +430,99 @@ def create_app(conn: sqlite3.Connection | None = None,
                             "detail": f"No preference for '{canonical}'."}), 404
         return jsonify({"deleted": True, "canonical": canonical}), 200
 
+    # ------------------------------------------------------------------
+    # Browser UI routes
+    # ------------------------------------------------------------------
+
+    @app.route("/", methods=["GET"])
+    def index():
+        conn_ = _get_conn()
+        items = get_list(conn_)
+        flagged = list_ambiguous(conn_)
+        return render_template("index.html",
+                               item_count=len(items),
+                               flagged_count=len(flagged))
+
+    @app.route("/list", methods=["GET"])
+    def ui_list():
+        conn_ = _get_conn()
+        rows = get_list(conn_)
+        by_category: dict[str, list] = {}
+        for row in rows:
+            cat = row["category"] or "other"
+            by_category.setdefault(cat, []).append(dict(row))
+        return render_template("list.html",
+                               by_category=by_category,
+                               item_count=len(rows))
+
+    @app.route("/flagged", methods=["GET"])
+    def ui_flagged():
+        conn_ = _get_conn()
+        items = list_ambiguous(conn_)
+        return render_template("flagged.html", items=items)
+
+    @app.route("/drafts/new", methods=["GET"])
+    def ui_draft_new():
+        conn_ = _get_conn()
+        rows = get_list(conn_)
+        flagged = list_ambiguous(conn_)
+        items = [dict(r) for r in rows]
+        return render_template("drafts_new.html", items=items, flagged=flagged)
+
+    @app.route("/drafts/new", methods=["POST"])
+    def ui_draft_create():
+        if not _logged_in():
+            flash("Login required to create a draft.", "error")
+            return redirect(url_for("login"))
+        conn_ = _get_conn()
+        draft = create_draft(conn_)
+        return redirect(url_for("ui_draft_detail", session_id=draft["session_id"]))
+
+    @app.route("/drafts/<int:session_id>", methods=["GET"])
+    def ui_draft_detail(session_id: int):
+        conn_ = _get_conn()
+        sess = get_session(conn_, session_id)
+        if sess is None:
+            abort(404)
+        items = [dict(i) for i in get_session_items(conn_, session_id)]
+        return render_template("draft.html", sess=dict(sess), items=items)
+
+    @app.route("/drafts/<int:session_id>/approve", methods=["POST"])
+    def ui_draft_approve(session_id: int):
+        if not _logged_in():
+            flash("Login required to approve a draft.", "error")
+            return redirect(url_for("login"))
+        conn_ = _get_conn()
+        try:
+            submit_approval(conn_, session_id, approver="vern", phrase="approve order")
+            flash("Order approved.", "success")
+        except ApprovalError as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("ui_draft_detail", session_id=session_id))
+
+    @app.route("/login", methods=["GET"])
+    def login():
+        return render_template("login.html")
+
+    @app.route("/login", methods=["POST"])
+    def login_post():
+        token = request.form.get("token", "").strip()
+        bt = app.config.get("BROWSER_TOKEN", "")
+        if not bt:
+            flash("Browser access is not configured (BROWSER_TOKEN not set).", "error")
+            return redirect(url_for("login"))
+        if token == bt:
+            session["logged_in"] = True
+            return redirect(url_for("index"))
+        flash("Incorrect token.", "error")
+        return redirect(url_for("login"))
+
+    @app.route("/logout", methods=["GET"])
+    def logout():
+        session.clear()
+        flash("Logged out.", "success")
+        return redirect(url_for("index"))
+
     return app
 
 
@@ -424,11 +537,10 @@ if __name__ == "__main__":
 
     if not db_path.exists() or str(db_path) == ":memory:":
         schema = SCHEMA_PATH.read_text()
-        _conn = get_connection(db_path)
-        _conn.executescript(schema)
+        init_conn = get_connection(db_path)
+        init_conn.executescript(schema)
+        init_conn.close()
         print(f"Initialized new database at {db_path}", file=sys.stderr)
-    else:
-        _conn = get_connection(db_path)
 
     # Warn on risky partial configurations before starting.
     _cfg = load_env_config()
@@ -442,7 +554,8 @@ if __name__ == "__main__":
         print(file=sys.stderr)
 
     port = int(os.environ.get("GROCERY_PORT", 5000))
+    debug = os.environ.get("GROCERY_DEBUG", "").strip() == "1"
     print(f"Starting Grocery Assistant on http://127.0.0.1:{port}", file=sys.stderr)
     print(f"Database: {db_path}", file=sys.stderr)
-    app = create_app(conn=_conn)
-    app.run(host="127.0.0.1", port=port, debug=True)
+    app = create_app()
+    app.run(host="127.0.0.1", port=port, debug=debug, use_reloader=debug)

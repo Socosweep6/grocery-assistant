@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Grocery List{% endblock %}
+{% block content %}
+<h1>Grocery List</h1>
+
+{% if item_count == 0 %}
+  <div class="empty-state">No items on the list yet. Add some via Discord or SMS.</div>
+{% else %}
+  {% for category in by_category.keys() | sort %}
+    {% set items = by_category[category] %}
+    <div class="section-label">{{ category }}</div>
+    <div class="card">
+      {% for item in items %}
+        <div class="item">
+          <span class="item-name">{{ item.name }}</span>
+          {% if item.quantity %}
+            <span class="item-meta">x{{ item.quantity }}{% if item.unit %} {{ item.unit }}{% endif %}</span>
+          {% endif %}
+          {% if item.ambiguous %}
+            <span class="badge badge-warn">needs clarification</span>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% endfor %}
+
+  <a href="/drafts/new" class="btn btn-primary">Create draft</a>
+{% endif %}
+{% endblock %}

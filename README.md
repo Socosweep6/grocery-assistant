@@ -158,6 +158,55 @@ GROCERY_PORT=8080 python3 -m grocery_assistant.web
 GROCERY_DB_PATH=/path/to/grocery.db python3 -m grocery_assistant.web
 ```
 
+## Mobile Browser UI
+
+The web server includes a phone-friendly browser interface. All pages are server-rendered HTML — no JavaScript framework required.
+
+### Start with browser auth enabled
+
+```bash
+BROWSER_TOKEN=your-secret-token FLASK_SECRET_KEY=your-secret-key python3 -m grocery_assistant.web
+```
+
+`BROWSER_TOKEN` is a shared household password. Set it to any strong random string. If unset, write actions (draft creation and approval) are blocked.
+
+`FLASK_SECRET_KEY` keeps browser sessions valid across server restarts. If unset, a random key is generated each restart (sessions invalidated on restart).
+
+### Browser URLs
+
+| URL | What you see | Auth required |
+|---|---|---|
+| `http://localhost:5000/` | Dashboard: item count, flagged count, quick links | No |
+| `http://localhost:5000/list` | Grocery list grouped by category | No |
+| `http://localhost:5000/flagged` | Items needing clarification | No |
+| `http://localhost:5000/drafts/new` | Preview pending items before creating a draft | No (read) / Yes (create) |
+| `http://localhost:5000/drafts/<id>` | Draft detail and approve button | No (read) / Yes (approve) |
+| `http://localhost:5000/login` | Token login | No |
+
+### Approval flow in the browser
+
+1. Go to `/drafts/new`, review the list, tap **Create draft**.
+2. On the draft detail page, if status is `awaiting_approval`, tap **Approve order**.
+3. The existing four-check gate runs: approver must be Vern, session must exist, status must be `awaiting_approval`, phrase must match. All checks are enforced server-side regardless of what the browser sends.
+
+Items flagged as ambiguous block approval until resolved via CLI.
+
+### Via ngrok (share with phone on another network)
+
+```bash
+ngrok http 5000
+# Copy the https://*.ngrok.io URL and open it on your phone
+```
+
+Set `BROWSER_TOKEN` before exposing via ngrok. The token is the only protection against public access.
+
+### Auth model tradeoffs
+
+- Single shared token, not per-user. It asserts "this is the household operator" (Vern).
+- No CSRF tokens. Same-origin form POSTs on a household-only tool.
+- Token replay from browser history is possible on a shared device. Acceptable risk for a local household tool.
+- For stronger isolation: replace the session cookie check with HTTP Basic Auth, or add `ngrok http --basic-auth="vern:token" 5000`.
+
 ## Using Preferences
 
 Preferences map canonical item names to a preferred form, substitution policy, and optional notes. They appear in draft output and during ambiguity resolution.

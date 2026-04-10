@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<h1>Login</h1>
+<p class="meta">Enter your household access token to create drafts and approve orders.</p>
+<form method="post" action="/login">
+  <label for="token">Access token</label>
+  <input type="password" id="token" name="token" autocomplete="current-password" placeholder="Enter your token">
+  <button type="submit" class="btn btn-primary">Login</button>
+</form>
+{% endblock %}

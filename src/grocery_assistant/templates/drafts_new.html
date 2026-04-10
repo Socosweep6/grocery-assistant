@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}New Draft{% endblock %}
+{% block content %}
+<h1>New Draft</h1>
+
+{% if flagged %}
+  <div class="flash warning">{{ flagged | length }} item(s) need clarification and will be flagged in the draft. <a href="/flagged">View flagged items.</a></div>
+{% endif %}
+
+{% if not items %}
+  <div class="empty-state">No pending items to draft.</div>
+{% else %}
+  <p class="meta">{{ items | length }} item(s) will be included in this draft.</p>
+  <div class="card">
+    {% for item in items %}
+      <div class="item">
+        <span class="item-name">{{ item.name }}</span>
+        {% if item.quantity %}
+          <span class="item-meta">x{{ item.quantity }}{% if item.unit %} {{ item.unit }}{% endif %}</span>
+        {% endif %}
+        {% if item.ambiguous %}
+          <span class="badge badge-warn">needs clarification</span>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  <form method="post" action="/drafts/new">
+    <button type="submit" class="btn btn-primary">Create draft</button>
+  </form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1>Grocery Assistant</h1>
+
+<div class="stat-grid">
+  <div class="stat">
+    <div class="stat-number">{{ item_count }}</div>
+    <div class="stat-label">Items on list</div>
+  </div>
+  <div class="stat">
+    <div class="stat-number{% if flagged_count > 0 %} warn{% endif %}">{{ flagged_count }}</div>
+    <div class="stat-label">Need clarification</div>
+  </div>
+</div>
+
+{% if item_count == 0 %}
+  <div class="empty-state">No items on the list yet. Add some via Discord or SMS.</div>
+{% else %}
+  <a href="/list" class="btn btn-secondary">View list ({{ item_count }})</a>
+  {% if flagged_count > 0 %}
+    <a href="/flagged" class="btn btn-secondary">View flagged items ({{ flagged_count }})</a>
+  {% endif %}
+  <a href="/drafts/new" class="btn btn-primary">Create draft</a>
+{% endif %}
+{% endblock %}
