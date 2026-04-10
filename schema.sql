@@ -86,3 +86,17 @@ CREATE TABLE IF NOT EXISTS preferences (
     note            TEXT,
     updated_at      TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS cart_fill_runs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        INTEGER NOT NULL REFERENCES cart_sessions(id),
+    automation_target TEXT    NOT NULL DEFAULT 'instacart',
+    requested_by      TEXT    NOT NULL,
+    status            TEXT    NOT NULL
+                      CHECK (status IN ('queued', 'blocked', 'running', 'succeeded', 'partial', 'failed', 'cancelled')),
+    status_detail     TEXT,
+    session_path      TEXT,
+    created_at        TEXT    NOT NULL,
+    started_at        TEXT,
+    finished_at       TEXT
+);

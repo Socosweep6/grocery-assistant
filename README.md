@@ -6,6 +6,8 @@ Household grocery assistant with Discord + SMS intake, shared grocery list, Inst
 
 Phase 2 shopping handoff is now implemented on top of the mobile web UI. Approved drafts can now open a phone-friendly Instacart handoff page with per-item deep links, and Vern can manually mark the draft ordered after checkout so those items leave the active grocery list.
 
+Work has now started on the next phase toward automatic Instacart cart fill. This first slice adds a cart-fill run model/state machine plus browser/API monitoring for approved drafts. It does **not** add products to Instacart yet.
+
 ## What It Does
 
 - Accepts grocery items from Discord and SMS via webhook-ready adapters
@@ -22,6 +24,7 @@ Phase 2 shopping handoff is now implemented on top of the mobile web UI. Approve
 - Enforces a hard approval gate: only Vern can approve, only explicit phrases count, per session only
 - Gives approved drafts a mobile shopping handoff page with per-item Instacart search links
 - Lets Vern manually mark a shopping session ordered after Instacart checkout, moving linked items off the active list
+- Tracks future automatic cart-fill runs per approved draft, including blocked/queued/running/final states
 
 ## Safety Rules
 
@@ -68,7 +71,7 @@ No real Twilio account or Discord bot token required for local operation.
 python3 -m pytest tests/ -v
 ```
 
-Expected: 432 passed.
+Expected: 442 passed.
 
 ## Readiness Check
 
@@ -197,6 +200,17 @@ BROWSER_TOKEN=your-secret-token FLASK_SECRET_KEY=your-secret-key python3 -m groc
 7. Linked grocery items move to `ordered` and disappear from the active grocery list.
 
 Items flagged as ambiguous still block approval until resolved via CLI or API. No Instacart checkout is ever auto-submitted from this app.
+
+### Cart-fill groundwork now in progress
+
+Approved draft pages now also show an **Automatic cart-fill prep** panel. In this slice it only records and displays cart-fill runs; it does **not** automate Instacart yet.
+
+- `POST /drafts/<id>/cart-fill/prepare` records a run for an approved draft.
+- `GET /api/draft/<id>/cart-fill` returns the latest run plus history.
+- If `INSTACART_SESSION_FILE` is missing, the run is marked `blocked` with a blunt message about the missing saved session.
+- If `INSTACART_SESSION_FILE` exists, the run is marked `queued` for the future worker slice.
+
+This keeps the approval gate intact and still stops before checkout.
 
 ### Via ngrok (share with phone on another network)
 

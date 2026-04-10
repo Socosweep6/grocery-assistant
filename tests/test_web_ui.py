@@ -355,6 +355,76 @@ class TestUiDraftShop:
 
 
 # ---------------------------------------------------------------------------
+# Cart-fill prep groundwork
+# ---------------------------------------------------------------------------
+
+class TestUiCartFillPrep:
+    def test_approved_draft_detail_shows_cart_fill_prep_panel(self, authed_client, conn):
+        add_from_message(conn, "bananas", "discord", "vern")
+        draft = authed_client.post("/api/draft").get_json()
+        sid = draft["session_id"]
+        authed_client.post(f"/drafts/{sid}/approve")
+
+        resp = authed_client.get(f"/drafts/{sid}")
+
+        assert resp.status_code == 200
+        assert b"Automatic cart-fill prep" in resp.data
+        assert b"Prepare automatic cart fill" in resp.data
+
+    def test_prepare_cart_fill_requires_login(self, client, conn):
+        add_from_message(conn, "bananas", "discord", "vern")
+        draft = client.post("/api/draft").get_json()
+        sid = draft["session_id"]
+        client.post(f"/drafts/{sid}/approve")
+
+        resp = client.post(f"/drafts/{sid}/cart-fill/prepare", follow_redirects=False)
+
+        assert resp.status_code == 302
+        assert "login" in resp.headers["Location"]
+
+    def test_prepare_cart_fill_records_blocked_run_when_session_file_missing(self, authed_client, conn):
+        add_from_message(conn, "bananas", "discord", "vern")
+        draft = authed_client.post("/api/draft").get_json()
+        sid = draft["session_id"]
+        authed_client.post(f"/drafts/{sid}/approve")
+
+        resp = authed_client.post(f"/drafts/{sid}/cart-fill/prepare", follow_redirects=True)
+
+        assert resp.status_code == 200
+        assert b"status-blocked" in resp.data.lower()
+        payload = authed_client.get(f"/api/draft/{sid}/cart-fill").get_json()
+        assert payload["latest_run"]["status"] == "blocked"
+
+    def test_prepare_cart_fill_records_queued_run_when_session_file_exists(self, conn, tmp_path):
+        app = create_app(
+            conn=conn,
+            trusted_sms=TRUSTED_SMS,
+            trusted_discord=TRUSTED_DISCORD,
+            browser_token=BROWSER_TOKEN,
+            secret_key=SECRET_KEY,
+        )
+        app.config["TESTING"] = True
+        session_file = tmp_path / "instacart-session.json"
+        session_file.write_text("{}")
+        app.config["INSTACART_SESSION_FILE"] = str(session_file)
+
+        with app.test_client() as c:
+            with c.session_transaction() as sess:
+                sess["logged_in"] = True
+            add_from_message(conn, "bananas", "discord", "vern")
+            draft = c.post("/api/draft").get_json()
+            sid = draft["session_id"]
+            c.post(f"/drafts/{sid}/approve")
+
+            resp = c.post(f"/drafts/{sid}/cart-fill/prepare", follow_redirects=True)
+            payload = c.get(f"/api/draft/{sid}/cart-fill").get_json()
+
+        assert resp.status_code == 200
+        assert b"status-queued" in resp.data.lower()
+        assert payload["latest_run"]["status"] == "queued"
+
+
+# ---------------------------------------------------------------------------
 # GET /login  /  POST /login  /  GET /logout
 # ---------------------------------------------------------------------------
 

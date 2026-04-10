@@ -71,6 +71,7 @@ from .clarification import (
 from .twilio_sig import verify_signature as twilio_verify_signature
 from .approval import submit_approval, ApprovalError
 from .shopping import build_shopping_handoff, complete_shopping_handoff, ShoppingHandoffError
+from .cart_fill import get_cart_fill_status, prepare_cart_fill_run, CartFillError
 from .preferences import (
     list_preferences,
     set_preference,
@@ -136,6 +137,7 @@ def create_app(conn: sqlite3.Connection | None = None,
     )
     app.secret_key = _secret_key
     app.config["BROWSER_TOKEN"] = _browser_token
+    app.config["INSTACART_SESSION_FILE"] = os.environ.get("INSTACART_SESSION_FILE", "").strip()
 
     def _logged_in() -> bool:
         return session.get("logged_in") is True
@@ -486,7 +488,8 @@ def create_app(conn: sqlite3.Connection | None = None,
         if sess is None:
             abort(404)
         items = [dict(i) for i in get_session_items(conn_, session_id)]
-        return render_template("draft.html", sess=dict(sess), items=items)
+        cart_fill = get_cart_fill_status(conn_, session_id, include_history=True)
+        return render_template("draft.html", sess=dict(sess), items=items, cart_fill=cart_fill)
 
     @app.route("/drafts/<int:session_id>/approve", methods=["POST"])
     def ui_draft_approve(session_id: int):
@@ -498,6 +501,36 @@ def create_app(conn: sqlite3.Connection | None = None,
             submit_approval(conn_, session_id, approver="vern", phrase="approve order")
             flash("Order approved.", "success")
         except ApprovalError as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("ui_draft_detail", session_id=session_id))
+
+    @app.route("/api/draft/<int:session_id>/cart-fill", methods=["GET"])
+    def api_get_cart_fill_status(session_id: int):
+        conn_ = _get_conn()
+        try:
+            return jsonify(get_cart_fill_status(conn_, session_id, include_history=True)), 200
+        except CartFillError as exc:
+            return jsonify({"error": "cart_fill_error", "detail": str(exc)}), 404
+
+    @app.route("/drafts/<int:session_id>/cart-fill/prepare", methods=["POST"])
+    def ui_prepare_cart_fill(session_id: int):
+        if not _logged_in():
+            flash("Login required to prepare automatic cart fill.", "error")
+            return redirect(url_for("login"))
+        conn_ = _get_conn()
+        try:
+            result = prepare_cart_fill_run(
+                conn_,
+                session_id,
+                requested_by="vern",
+                session_path=app.config.get("INSTACART_SESSION_FILE") or None,
+            )
+            latest = result.get("latest_run") or {}
+            flash(
+                f"Cart-fill prep recorded with status '{latest.get('status', 'unknown')}'. {latest.get('status_detail', '')}",
+                "success" if latest.get("status") == "queued" else "warning",
+            )
+        except CartFillError as exc:
             flash(str(exc), "error")
         return redirect(url_for("ui_draft_detail", session_id=session_id))
 

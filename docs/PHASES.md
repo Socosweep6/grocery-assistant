@@ -71,3 +71,35 @@ This phase still requires Vern to:
 - and complete checkout manually.
 
 A true automated cart-fill phase would still need retailer/session automation or a supported Instacart integration, which is intentionally out of scope here.
+
+## Phase 3 - Automatic Cart-Fill Groundwork
+
+**Status:** In progress on `feat/shopping-handoff-phase2`.
+
+### Goal
+
+Lay the safe groundwork for automatic Instacart cart fill without pretending checkout automation is acceptable or easy.
+
+### First slice shipped
+
+- `cart_fill_runs` table for per-draft automation bookkeeping
+- cart-fill run state machine (`queued`, `blocked`, `running`, `succeeded`, `partial`, `failed`, `cancelled`)
+- approved draft UI panel to view/start cart-fill prep
+- JSON status endpoint for latest run + history
+
+### What this slice does **not** do
+
+- It does not open Instacart.
+- It does not add items to an Instacart cart.
+- It does not automate checkout.
+
+### Why start here
+
+Saved-session browser automation is operationally fragile. Before adding Playwright or a worker, the app needs a truthful way to record:
+- whether automation is eligible for a draft,
+- whether a saved browser session is missing,
+- and what happened across retries.
+
+### Immediate next step
+
+Add optional Playwright session capture + health-check tooling, then connect queued runs to a local worker.

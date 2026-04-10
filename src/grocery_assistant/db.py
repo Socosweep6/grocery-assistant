@@ -36,6 +36,24 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         """
     )
 
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cart_fill_runs (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id        INTEGER NOT NULL REFERENCES cart_sessions(id),
+            automation_target TEXT    NOT NULL DEFAULT 'instacart',
+            requested_by      TEXT    NOT NULL,
+            status            TEXT    NOT NULL
+                              CHECK (status IN ('queued', 'blocked', 'running', 'succeeded', 'partial', 'failed', 'cancelled')),
+            status_detail     TEXT,
+            session_path      TEXT,
+            created_at        TEXT    NOT NULL,
+            started_at        TEXT,
+            finished_at       TEXT
+        )
+        """
+    )
+
     cart_session_columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(cart_sessions)").fetchall()
@@ -367,3 +385,67 @@ def count_ambiguous_in_session(conn: sqlite3.Connection,
         (session_id,),
     ).fetchone()
     return row["n"] if row else 0
+
+
+def insert_cart_fill_run(conn: sqlite3.Connection,
+                         session_id: int,
+                         requested_by: str,
+                         status: str,
+                         automation_target: str = "instacart",
+                         status_detail: str | None = None,
+                         session_path: str | None = None,
+                         created_at: datetime | None = None) -> int:
+    ts = (created_at or datetime.now(UTC)).isoformat()
+    cur = conn.execute(
+        "INSERT INTO cart_fill_runs"
+        " (session_id, automation_target, requested_by, status, status_detail, session_path, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (session_id, automation_target, requested_by, status, status_detail, session_path, ts),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_cart_fill_run(conn: sqlite3.Connection, run_id: int) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM cart_fill_runs WHERE id = ?",
+        (run_id,),
+    ).fetchone()
+
+
+def list_cart_fill_runs_for_session(conn: sqlite3.Connection,
+                                    session_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM cart_fill_runs WHERE session_id = ? ORDER BY id DESC",
+        (session_id,),
+    ).fetchall()
+
+
+def get_latest_cart_fill_run_for_session(conn: sqlite3.Connection,
+                                         session_id: int) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM cart_fill_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+
+
+def update_cart_fill_run(conn: sqlite3.Connection,
+                         run_id: int,
+                         *,
+                         status: str,
+                         status_detail: str | None = None,
+                         started_at: datetime | None = None,
+                         finished_at: datetime | None = None) -> None:
+    conn.execute(
+        "UPDATE cart_fill_runs"
+        " SET status = ?, status_detail = ?, started_at = COALESCE(?, started_at), finished_at = COALESCE(?, finished_at)"
+        " WHERE id = ?",
+        (
+            status,
+            status_detail,
+            started_at.isoformat() if started_at else None,
+            finished_at.isoformat() if finished_at else None,
+            run_id,
+        ),
+    )
+    conn.commit()
