@@ -2,7 +2,16 @@
 {% block title %}Draft #{{ sess.id }}{% endblock %}
 {% block content %}
 <h1>Draft #{{ sess.id }}</h1>
-<p class="meta">Status: <span class="status-{{ sess.status }}">{{ sess.status | replace("_", " ") }}</span></p>
+<p class="meta">Status:
+  {% if sess.ordered_at %}
+    <span class="status-ordered">ordered</span>
+  {% else %}
+    <span class="status-{{ sess.status }}">{{ sess.status | replace("_", " ") }}</span>
+  {% endif %}
+</p>
+{% if sess.ordered_at %}
+  <p class="meta">Marked ordered: {{ sess.ordered_at }}</p>
+{% endif %}
 
 {% if not items %}
   <div class="empty-state">No items in this draft.</div>
@@ -16,6 +25,8 @@
         {% endif %}
         {% if item.ambiguous %}
           <span class="badge badge-warn">needs clarification</span>
+        {% elif item.status == "ordered" %}
+          <span class="badge badge-success">ordered</span>
         {% endif %}
         <span class="badge badge-muted">{{ item.category }}</span>
       </div>
@@ -34,8 +45,41 @@
   </div>
 {% elif sess.status == "needs_clarification" %}
   <div class="flash warning">Some items need clarification before this draft can be approved. <a href="/flagged">Resolve flagged items.</a></div>
+{% elif sess.ordered_at %}
+  <div class="flash success">Manual Instacart checkout is complete for this draft. <a href="/drafts/{{ sess.id }}/shop">View shopping handoff details.</a></div>
 {% elif sess.status == "approved" %}
   <div class="flash success">Order approved. Complete checkout in Instacart.</div>
+  <a href="/drafts/{{ sess.id }}/shop" class="btn btn-primary">Open shopping handoff</a>
+  <p class="note">The shopping handoff page gives you tap-friendly Instacart search links for each item and a manual completion step after checkout.</p>
+
+  <div class="approve-box">
+    <h2>Automatic cart-fill prep</h2>
+    {% if cart_fill.latest_run %}
+      <p class="meta">Latest run: <span class="status-{{ cart_fill.latest_run.status }}">{{ cart_fill.latest_run.status | replace("_", " ") }}</span></p>
+      {% if cart_fill.latest_run.status_detail %}
+        <p class="note">{{ cart_fill.latest_run.status_detail }}</p>
+      {% endif %}
+    {% else %}
+      <p class="note">No cart-fill run recorded yet. This slice only records and tracks runs; it does not add items to Instacart automatically yet.</p>
+    {% endif %}
+    <form method="post" action="/drafts/{{ sess.id }}/cart-fill/prepare">
+      <button type="submit" class="btn btn-secondary">Prepare automatic cart fill</button>
+    </form>
+    <p class="note">This keeps the approval gate intact. Even after automation lands, Vern still does the final Instacart review and place-order step on phone.</p>
+    {% if cart_fill.history %}
+      <div class="card">
+        {% for run in cart_fill.history %}
+          <div class="item">
+            <span class="item-name">Run #{{ run.id }}</span>
+            <span class="badge badge-muted">{{ run.status }}</span>
+            {% if run.status_detail %}
+              <span class="item-meta">{{ run.status_detail }}</span>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
 {% elif sess.status == "cancelled" %}
   <div class="flash error">This draft has been cancelled.</div>
 {% endif %}

@@ -106,6 +106,10 @@ def submit_approval(conn: sqlite3.Connection, session_id: int,
         raise ApprovalError(f"Cart session {session_id} does not exist.")
 
     # 3. Session state
+    if session["ordered_at"]:
+        raise ApprovalError(
+            f"Session {session_id} has already been marked ordered after manual checkout."
+        )
     if session["status"] == "approved":
         raise ApprovalError(
             f"Session {session_id} is already approved. "
@@ -153,10 +157,10 @@ def submit_approval(conn: sqlite3.Connection, session_id: int,
 
 def can_submit(conn: sqlite3.Connection, session_id: int) -> bool:
     """
-    Return True only if session exists and is in 'approved' status.
+    Return True only if session exists, is approved, and is not already completed.
     This is the enforcement point for any downstream submission attempt.
     """
     session = get_session(conn, session_id)
     if session is None:
         return False
-    return session["status"] == "approved"
+    return session["status"] == "approved" and not session["ordered_at"]

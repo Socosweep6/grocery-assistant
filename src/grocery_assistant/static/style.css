@@ -341,7 +341,32 @@ input:focus {
 .status-needs_clarification { color: var(--warning-text); font-weight: 600; }
 .status-awaiting_approval { color: var(--primary); font-weight: 600; }
 .status-approved          { color: var(--success); font-weight: 600; }
+.status-ordered           { color: var(--success); font-weight: 700; }
 .status-cancelled         { color: var(--danger); font-weight: 600; }
+
+/* ── Shopping handoff ── */
+
+.shop-list {
+  display: grid;
+  gap: 12px;
+}
+
+.shop-card {
+  padding: 16px;
+}
+
+.shop-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shop-note {
+  font-size: 14px;
+  color: var(--muted);
+  margin-top: 10px;
+}
 
 /* ── Utility ── */
 

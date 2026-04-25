@@ -1,147 +1,105 @@
 # Grocery Assistant: Phase Definitions
 
-## Phase 1 - Mobile Web UI (this branch)
+## Phase 1 - Mobile Web UI
 
-**Goal:** Add a phone-friendly browser experience to the existing Flask app so Vern can review the grocery list, create a draft, and approve it from a mobile browser without touching the CLI.
+**Status:** Implemented.
+
+Phase 1 shipped the phone-friendly Flask UI for reviewing the list, creating drafts, and approving drafts from a browser with the existing shared-token browser auth.
+
+## Phase 2 - Shopping Handoff / Deep Links
+
+**Status:** Implemented on `feat/shopping-handoff-phase2`.
+
+### Goal
+
+Once Vern approves a draft, give her a practical mobile path into Instacart tonight without brittle browser automation.
+
+### Product decision
+
+Ship the deep-link handoff now. Do **not** automate Instacart login, cart fill, or checkout.
 
 ### What ships
 
 | Route | Description |
 |---|---|
-| `GET /` | Dashboard: item count, flagged count, quick links |
-| `GET /list` | Current grocery list grouped by category |
-| `GET /flagged` | Items flagged as ambiguous / needing clarification |
-| `GET /drafts/new` | Preview pending items before creating a draft |
-| `POST /drafts/new` | Create a draft session; redirects to `/drafts/<id>` |
-| `GET /drafts/<id>` | View a draft with all items and status |
-| `POST /drafts/<id>/approve` | Approve a draft from the browser |
-| `GET /login` | Token login page |
-| `POST /login` | Validate token and set session cookie |
-| `GET /logout` | Clear session |
+| `GET /drafts/<id>/shop` | Mobile-friendly shopping handoff page for approved drafts |
+| `POST /drafts/<id>/ordered` | Manual completion step after checkout in Instacart |
 
-All existing JSON API routes (`/api/*`) and CLI commands stay fully intact.
+### Flow
 
-### Browser auth model
-
-**Decision:** Single shared access token, set via `BROWSER_TOKEN` environment variable.
-
-- Read-only pages (`/`, `/list`, `/flagged`, `GET /drafts/*`) need no login.
-- Write actions (`POST /drafts/new`, `POST /drafts/<id>/approve`) require an active session.
-- Login: enter the token at `/login`; Flask sets a session cookie valid for the browser session.
-- No token set (`BROWSER_TOKEN` unset or empty): all write actions are blocked.
-
-**Tradeoff accepted:** This is a single shared household secret, not per-user auth. It asserts "this is the household operator" (i.e., Vern). The approval route still calls the existing `submit_approval()` gate with `approver="vern"` and phrase `"approve order"`, so all four hard safety checks remain in force:
-
-1. Approver must be Vern.
-2. Session must exist.
-3. Session must be in `awaiting_approval` status (not already approved, cancelled, or needs clarification).
-4. Phrase must be in `APPROVED_PHRASES`.
-
-**What this does NOT protect against:** token replay from browser history or shared device. For a household tool on a local network or behind ngrok with Vern as the sole user, that risk is acceptable. If you want stronger isolation, replace the session cookie check with HTTP Basic Auth or a per-device cookie.
-
-**CSRF:** No CSRF tokens. Same-origin form POSTs on a household-only tool. Not worth the complexity at this scope.
+1. Review pending items in the browser.
+2. Create a draft.
+3. Approve the draft with the existing Vern-only approval gate.
+4. Open the shopping handoff page.
+5. Tap per-item Instacart search links on phone.
+6. Manually choose products and complete checkout in Instacart.
+7. Tap **mark ordered** back in Grocery Assistant.
+8. Linked grocery items move to `ordered` and leave the active grocery list.
 
 ### Implementation notes
 
-- Server-rendered Jinja2 templates. No JS framework.
-- Minimal CSS in `static/style.css`: mobile viewport, large touch targets, system font stack.
-- Templates in `src/grocery_assistant/templates/`.
-- Set `FLASK_SECRET_KEY` in your environment for stable sessions across restarts. If unset, a random key is generated at startup (sessions invalidated on restart).
-- Set `BROWSER_TOKEN` to a strong random string before exposing via ngrok.
+- Instacart links are simple search URLs in the form:
+  `https://www.instacart.com/store/search_v3/term?term=<query>`
+- Search terms prefer household preferences when available, then fall back to the item name / notes.
+- The handoff page stays server-rendered. No JavaScript framework.
+- Write actions still require the shared browser session token.
+- Approval safety is unchanged: only Vern, explicit phrase, per-session approval, no approval for unresolved drafts.
+- No auto-submit path was added.
 
-### How to run and verify
+### Ordered state
 
-```bash
-# Start the server (port 5000 default)
-BROWSER_TOKEN=your-secret-token python3 -m grocery_assistant.web
-
-# Or set in .env and source it:
-source .env && python3 -m grocery_assistant.web
-```
-
-Open on phone (or browser):
-
-| URL | What you see |
-|---|---|
-| `http://localhost:5000/` | Dashboard |
-| `http://localhost:5000/list` | Grocery list by category |
-| `http://localhost:5000/flagged` | Flagged / ambiguous items |
-| `http://localhost:5000/drafts/new` | Preview list + create draft |
-| `http://localhost:5000/drafts/<id>` | Draft detail + approve button |
-| `http://localhost:5000/login` | Token login |
-
-Via ngrok:
-```bash
-ngrok http 5000
-# share the https://*.ngrok.io URL with household
-```
+- `cart_sessions` now record `ordered_at` when manual checkout is complete.
+- Marking ordered updates linked grocery items to `ordered`.
+- Ordered items no longer appear in the active grocery list.
+- An ordered session is no longer eligible for downstream submission checks.
 
 ### Tests
 
-New test file: `tests/test_web_ui.py`
-
 Run:
+
 ```bash
-python3 -m pytest tests/test_web_ui.py -v
-python3 -m pytest tests/ -v   # full suite
+python3 -m pytest tests/test_shopping.py tests/test_web_ui.py -v
+python3 -m pytest tests/ -v
 ```
 
----
+### Remaining gap vs full automation
 
-## Phase 2 - Shopping Handoff / Instacart Cart Fill
+This phase still requires Vern to:
+- open each Instacart search result,
+- pick the correct product,
+- add it in Instacart,
+- and complete checkout manually.
 
-**Goal:** After Vern approves a draft in the browser, give her a frictionless path to Instacart. The household still places the actual order manually in Instacart; automation fills the cart so Vern only has to review and tap "Place order."
+A true automated cart-fill phase would still need retailer/session automation or a supported Instacart integration, which is intentionally out of scope here.
 
-**Status: Planned only. Not implemented.**
+## Phase 3 - Automatic Cart-Fill Groundwork
 
-### Problem statement
+**Status:** In progress on `feat/shopping-handoff-phase2`.
 
-Phase 1 ends with an approved draft in the DB. To buy the items, Vern currently has to:
-1. Open Instacart.
-2. Search for each item manually.
-3. Add to cart one by one.
-4. Review and place order.
+### Goal
 
-Phase 2 eliminates steps 2-3.
+Lay the safe groundwork for automatic Instacart cart fill without pretending checkout automation is acceptable or easy.
 
-### Proposed architecture
+### First slice shipped
 
-**Option A: Instacart deep links (preferred for MVP)**
+- `cart_fill_runs` table for per-draft automation bookkeeping
+- cart-fill run state machine (`queued`, `blocked`, `running`, `succeeded`, `partial`, `failed`, `cancelled`)
+- approved draft UI panel to view/start cart-fill prep
+- JSON status endpoint for latest run + history
 
-Instacart supports URL-based item search:
-`https://www.instacart.com/store/search_v3/term?term=<query>`
+### What this slice does **not** do
 
-The approved draft page (`GET /drafts/<id>`) could render a "Go shopping" section with:
-- A list of tappable Instacart search links, one per item.
-- Each link opens the Instacart search results for that item in a new tab/browser.
+- It does not open Instacart.
+- It does not add items to an Instacart cart.
+- It does not automate checkout.
 
-Pros: No automation, no API keys, no headless browser, no Terms of Service risk. Works on mobile Safari immediately.
-Cons: Vern still taps each item individually. Reduces friction but doesn't fully automate cart fill.
+### Why start here
 
-**Option B: Playwright/Puppeteer cart automation (heavier)**
+Saved-session browser automation is operationally fragile. Before adding Playwright or a worker, the app needs a truthful way to record:
+- whether automation is eligible for a draft,
+- whether a saved browser session is missing,
+- and what happened across retries.
 
-A background worker reads the approved session's items and drives a headless browser to:
-1. Log in to Instacart (or use a saved session cookie).
-2. Search each item and add the first result to cart.
-3. Flag mismatches or out-of-stock items back to the app.
+### Immediate next step
 
-Pros: Fully automated cart fill. Vern only reviews and taps "Place order."
-Cons: Brittle against Instacart UI changes. Requires storing Instacart credentials. May violate ToS. Needs careful error handling and retry logic.
-
-### Recommended Phase 2 scope
-
-Start with Option A (deep links) since it ships value immediately with zero infra:
-
-1. Add a `GET /drafts/<id>/shop` page that lists all approved items as Instacart search links.
-2. Or embed the shopping links directly in the approved draft view.
-3. Add a "Mark as ordered" button so Vern can close out a session after placing the Instacart order manually.
-4. Update item statuses to `ordered` when a session is marked complete.
-
-Option B (automation) should be a separate follow-on phase if deep links prove insufficient.
-
-### Open questions before planning Phase 2
-
-1. Does Vern want to fill one item at a time (Option A) or fully automated cart (Option B)?
-2. Is there a preferred Instacart store/retailer that affects the deep link format?
-3. Should "mark as ordered" clear the grocery list (move items to `ordered` status) or just close the session?
-4. Any preference on whether shopping links open in the same tab or new tab on mobile?
+Add optional Playwright session capture + health-check tooling, then connect queued runs to a local worker.
